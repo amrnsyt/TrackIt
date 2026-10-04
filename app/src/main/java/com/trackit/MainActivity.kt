@@ -235,7 +235,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
             item(key = "h$day") { SectionLabel(day) }
             items(list, key = { it.id }) { t ->
                 val st = rememberSwipeToDismissBoxState(confirmValueChange = { if (it == SwipeToDismissBoxValue.EndToStart) { onDelete(t); true } else false })
-                SwipeToDismissBox(st, Modifier.animateItem().clip(MaterialTheme.shapes.large), enableDismissFromStartToEnd = false, backgroundContent = {
+                SwipeToDismissBox(state = st, modifier = Modifier.animateItem().clip(MaterialTheme.shapes.large), enableDismissFromStartToEnd = false, backgroundContent = {
                     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.errorContainer).padding(end = 24.dp), contentAlignment = Alignment.CenterEnd) {
                         Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.onErrorContainer)
                     }
