@@ -11,7 +11,8 @@ import android.service.notification.StatusBarNotification
 class PayListener : NotificationListenerService() {
     private val amt = Regex("(?:RM|MYR)\\s?([0-9]{1,3}(?:,[0-9]{3})*(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)", RegexOption.IGNORE_CASE)
     private val who = Regex("\\b(?:to|at)\\s+([^.\\n]+?)(?=\\.\\s|\\.$|\\s+REF|\\s+on\\s|\\s+with\\s|$)", RegexOption.IGNORE_CASE)
-    private val hint = listOf("paid", "payment", "purchase", "spent", "debit", "transaction", "txn", "charged", "paywave", "duitnow", "qr", "transfer", "pembayaran")
+    private val incoming = Regex("\\b(received|credited|diterima|refund|cash ?in)\\b", RegexOption.IGNORE_CASE)
+    private val hint = listOf("paid", "payment", "purchase", "spent", "debit", "transaction", "txn", "charged", "paywave", "duitnow", "qr", "transfer", "pembayaran", "received", "credited", "diterima", "refund")
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (sbn.packageName == packageName) return
@@ -26,7 +27,8 @@ class PayListener : NotificationListenerService() {
         val wallet = sbn.packageName == "com.google.android.apps.walletnfcrel"
         val merchant = (if (wallet) title else who.find(body)?.groupValues?.get(1)?.trim())
             .let { if (it.isNullOrBlank()) title.ifBlank { sbn.packageName } else it }.take(40)
-        val t = Store.addTxn(Txn("${sbn.packageName}:${sbn.postTime}:$v", v, merchant, Store.classify(all), sbn.postTime)) ?: return
+        val inc = incoming.containsMatchIn(all)
+        val t = Store.addTxn(Txn("${sbn.packageName}:${sbn.postTime}:$v", v, merchant, if (inc) "Income" else Store.classify(all), sbn.postTime, inc)) ?: return
         ping(t)
     }
 

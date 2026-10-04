@@ -1,6 +1,11 @@
 package com.trackit
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import org.json.JSONArray
@@ -11,7 +16,7 @@ data class Category(
     val name: String, val keywords: String, val budget: Double = 0.0,
     val period: String = "MONTHLY", val startDay: Int = 1, val periodStart: Long = 0L
 )
-data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long)
+data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false)
 data class Snap(val id: String, val category: String, val start: Long, val end: Long, val budget: Double, val spent: Double)
 
 object Store {
@@ -51,7 +56,7 @@ object Store {
             Category("Bills", "tnb,unifi,maxis,celcom,digi,water")))
         JSONArray(s.getString("txns", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let {
-                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t")))
+                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false)))
             }
         }
         JSONArray(s.getString("snaps", "[]")).let { a ->
@@ -76,7 +81,7 @@ object Store {
 
     private fun save() {
         val c = JSONArray().also { a -> cats.forEach { a.put(JSONObject().put("n", it.name).put("k", it.keywords).put("b", it.budget).put("p", it.period).put("d", it.startDay).put("s", it.periodStart)) } }
-        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time)) } }
+        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income)) } }
         val h = JSONArray().also { a -> snaps.forEach { a.put(JSONObject().put("i", it.id).put("c", it.category).put("s", it.start).put("e", it.end).put("b", it.budget).put("a", it.spent)) } }
         sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString()).apply()
     }
@@ -118,7 +123,7 @@ object Store {
                 var n = 0
                 while (s < cur && n < 36) {
                     val e = nextOf(c, s)
-                    val sp = txns.filter { it.category == c.name && it.time >= s && it.time < e }.sumOf { it.amount }
+                    val sp = txns.filter { !it.income && it.category == c.name && it.time >= s && it.time < e }.sumOf { it.amount }
                     if (c.budget > 0 || sp > 0) snaps.add(0, Snap("${c.name}:$s", c.name, s, e, c.budget, sp))
                     s = e; n++
                 }
@@ -128,7 +133,7 @@ object Store {
         if (changed) save()
     }
 
-    fun spent(c: Category): Double = txns.filter { it.category == c.name && it.time >= c.periodStart }.sumOf { it.amount }
+    fun spent(c: Category): Double = txns.filter { !it.income && it.category == c.name && it.time >= c.periodStart }.sumOf { it.amount }
 
     fun addCat(c: Category) { cats.add(c.copy(periodStart = startOf(c))); reclassify(); save() }
     fun editCat(old: Category, n: Category) {
@@ -151,18 +156,20 @@ object Store {
             val old = txns[i]
             if (t.id.startsWith(WALLET) && !old.id.startsWith(WALLET)) {
                 txns[i] = t.copy(id = old.id, category = if (t.category == "Uncategorized") old.category else t.category)
-                save()
+                save(); alert(txns[i].category)
             }
             return null
         }
         txns.add(0, t); save()
+        if (!t.income) alert(t.category)
         return t
     }
     fun updateTxn(old: Txn, n: Txn) {
         val i = txns.indexOf(old); if (i < 0) return
         txns[i] = n
-        if (old.category == "Uncategorized" && n.category != "Uncategorized") learn(n.category, n.merchant)
+        if (old.category == "Uncategorized" && n.category != "Uncategorized" && !n.income) learn(n.category, n.merchant)
         save()
+        if (!n.income) alert(n.category)
     }
     private fun learn(cat: String, m: String) {
         val k = m.trim().lowercase()
@@ -177,6 +184,24 @@ object Store {
         rollover()
         val l = (txns + t).sortedByDescending { it.time }
         txns.clear(); txns.addAll(l); save()
+        if (!t.income) alert(t.category)
+    }
+    private fun alert(catName: String) {
+        val c = cats.firstOrNull { it.name == catName } ?: return
+        if (c.budget <= 0) return
+        val sp = spent(c)
+        val pct = sp / c.budget
+        val lvl = if (pct >= 1.0) 100 else if (pct >= 0.8) 80 else 0
+        val key = "al:${c.name}:${c.periodStart}"
+        if (lvl <= sp().getInt(key, 0)) return
+        sp().edit().putInt(key, lvl).apply()
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel("budget", "Budget alerts", NotificationManager.IMPORTANCE_HIGH))
+        val pi = PendingIntent.getActivity(ctx, c.name.hashCode(), Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val msg = if (lvl == 100) "%s is over budget: RM %.2f of RM %.2f".format(c.name, sp, c.budget) else "%s has used %d%% of its budget".format(c.name, (pct * 100).toInt())
+        nm.notify(("b" + c.name).hashCode(), Notification.Builder(ctx, "budget").setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Budget alert").setContentText(msg).setContentIntent(pi).setAutoCancel(true).build())
     }
     private fun reclassify() {
         for (j in txns.indices) if (txns[j].category == "Uncategorized") {

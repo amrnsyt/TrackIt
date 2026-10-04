@@ -267,6 +267,7 @@ private val ink = Color(0xFF2B2620)
 fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     var pick by remember { mutableStateOf<Txn?>(null) }
     var sel by remember { mutableStateOf<Long?>(null) }
+    var showAll by remember { mutableStateOf(false) }
     val week = remember { weekDays() }
     val now = System.currentTimeMillis()
     val today = week.firstOrNull { now - it in 0 until 86400000L } ?: week[0]
@@ -324,7 +325,12 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
                 }
             }
         }
-        item { SectionLabel(if (sel == null) "Recent activity" else dayLabel(sel!!)) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                SectionLabel(if (sel == null) "Recent activity" else dayLabel(sel!!))
+                TextButton({ showAll = true }) { Icon(Icons.Filled.Search, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Search & see all") }
+            }
+        }
         if (list0.isEmpty()) item {
             EmptyState(Icons.Filled.Contactless, if (sel == null) "No payments yet" else "No payments this day",
                 if (sel == null) "Pay with QR or Paywave and it appears here automatically, or tap + to add one." else "Tap the selected day again to see everything.")
@@ -338,25 +344,13 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
                         Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.onErrorContainer)
                     }
                 }) {
-                    Surface(onClick = { pick = t }, color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.large) {
-                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            CatAvatar(t.category)
-                            Column(Modifier.weight(1f)) {
-                                Text(t.merchant, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    if (t.category == "Uncategorized") Pill("Categorize", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-                                    else Text(t.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("· " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(t.time)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                            Text(rm(t.amount), style = MaterialTheme.typography.titleMedium)
-                        }
-                    }
+                    TxnRow(t) { pick = t }
                 }
             }
         }
     }
     pick?.let { EditTxnSheet(it, onDelete) { pick = null } }
+    if (showAll) AllPaymentsSheet({ showAll = false }) { pick = it }
 }
 
 @Composable
@@ -387,6 +381,7 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
                 }
             }
         }
+        item { TrendCard() }
         if (Store.cats.isEmpty()) item { EmptyState(Icons.Filled.PieChart, "No categories", "Create a category to group payments and set a budget.") }
         items(Store.cats.toList(), key = { it.name }) { c ->
             val v = Store.spent(c)
@@ -454,13 +449,20 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
     var amt by remember(t.id) { mutableStateOf("%.2f".format(t.amount)) }
     var mer by remember(t.id) { mutableStateOf(t.merchant) }
     var cat by remember(t.id) { mutableStateOf(t.category) }
+    var inc by remember(t.id) { mutableStateOf(t.income) }
     val v = amt.replace(",", ".").toDoubleOrNull()
     Sheet("Edit payment", close) {
         Field(amt, { amt = it }, "Amount RM", KeyboardType.Decimal, if (v == null || v <= 0) "Enter a valid amount" else null)
         Field(mer, { mer = it }, "Merchant")
-        SectionLabel("Category")
-        Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
-        PrimaryButton("Save changes", v != null && v > 0) { Store.updateTxn(t, t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = cat)); close() }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("This is income (not counted as spending)", Modifier.weight(1f))
+            Switch(inc, { inc = it })
+        }
+        if (!inc) {
+            SectionLabel("Category")
+            Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
+        }
+        PrimaryButton("Save changes", v != null && v > 0) { Store.updateTxn(t, t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc)); close() }
         TextButton({ close(); onDelete(t) }, Modifier.fillMaxWidth()) { Text("Delete payment", color = MaterialTheme.colorScheme.error) }
     }
 }
@@ -517,5 +519,87 @@ fun CatSheet(edit: Category?, close: () -> Unit) {
             close()
         }
         if (edit != null) TextButton({ Store.delCat(edit); close() }, Modifier.fillMaxWidth()) { Text("Delete category", color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+fun TxnRow(t: Txn, onClick: () -> Unit) {
+    Surface(onClick = onClick, color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.large) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            CatAvatar(t.category)
+            Column(Modifier.weight(1f)) {
+                Text(t.merchant, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (t.category == "Uncategorized") Pill("Categorize", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                    else Text(t.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("· " + SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()).format(Date(t.time)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Text((if (t.income) "+" else "") + rm(t.amount), style = MaterialTheme.typography.titleMedium,
+                color = if (t.income) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface)
+        }
+    }
+}
+
+@Composable
+fun AllPaymentsSheet(onClose: () -> Unit, onPick: (Txn) -> Unit) {
+    var q by remember { mutableStateOf("") }
+    var cat by remember { mutableStateOf("All") }
+    var off by remember { mutableIntStateOf(0) }
+    val cal = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0); add(Calendar.MONTH, -off) }
+    val s = cal.timeInMillis
+    val e = (cal.clone() as Calendar).apply { add(Calendar.MONTH, 1) }.timeInMillis
+    val list = Store.txns.filter { it.time in s until e && (cat == "All" || it.category == cat) && (q.isBlank() || it.merchant.contains(q.trim(), true)) }
+    Sheet("All payments", onClose) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconButton({ off++ }) { Icon(Icons.Filled.ChevronLeft, "Previous month") }
+            Text(SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(s)), style = MaterialTheme.typography.titleMedium)
+            IconButton({ if (off > 0) off-- }, enabled = off > 0) { Icon(Icons.Filled.ChevronRight, "Next month") }
+        }
+        Field(q, { q = it }, "Merchant search")
+        Chips((listOf("All") + Store.cats.map { it.name } + listOf("Uncategorized", "Income")).map { it to it }, cat) { cat = it }
+        Text("${rm(list.filter { !it.income }.sumOf { it.amount })} spent · ${rm(list.filter { it.income }.sumOf { it.amount })} in · ${list.size} payments",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (list.isEmpty()) Text("No payments match.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        list.forEach { t -> TxnRow(t) { onPick(t) } }
+    }
+}
+
+fun trend(monthly: Boolean): List<Pair<String, Double>> {
+    val fmt = SimpleDateFormat(if (monthly) "MMM" else "EEE", Locale.getDefault())
+    return (if (monthly) 5 downTo 0 else 6 downTo 0).map { i ->
+        val s = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            if (monthly) { set(Calendar.DAY_OF_MONTH, 1); add(Calendar.MONTH, -i) } else add(Calendar.DAY_OF_MONTH, -i)
+        }
+        val e = (s.clone() as Calendar).apply { if (monthly) add(Calendar.MONTH, 1) else add(Calendar.DAY_OF_MONTH, 1) }
+        fmt.format(s.time) to Store.txns.filter { !it.income && it.time >= s.timeInMillis && it.time < e.timeInMillis }.sumOf { it.amount }
+    }
+}
+
+@Composable
+fun TrendCard() {
+    var monthly by remember { mutableStateOf(false) }
+    val data = trend(monthly)
+    val max = (data.maxOfOrNull { it.second } ?: 0.0).coerceAtLeast(1.0)
+    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Spending trend", style = MaterialTheme.typography.titleMedium)
+                    Text(if (monthly) "Last 6 months" else "Last 7 days", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Chips(listOf("D" to "Daily", "M" to "Monthly"), if (monthly) "M" else "D") { monthly = it == "M" }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                data.forEachIndexed { i, (l, v) -> TrendBar(l, (v / max).toFloat(), i == data.lastIndex) }
+            }
+            val cur = data.last().second
+            val prev = data[data.size - 2].second
+            Text(
+                if (monthly && prev > 0) "This month ${rm(cur)} · ${Math.abs(((cur - prev) / prev * 100).toInt())}% ${if (cur >= prev) "more" else "less"} than last month"
+                else if (monthly) "This month ${rm(cur)}" else "Today ${rm(cur)} · yesterday ${rm(prev)}",
+                style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }

@@ -158,3 +158,14 @@ fun PillBar(label: String, frac: Float, color: Color, text: String) {
         Text(label, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }
+
+@Composable
+fun TrendBar(label: String, frac: Float, hi: Boolean) {
+    val f by animateFloatAsState(frac.coerceIn(0.03f, 1f), tween(700), label = "tb")
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.width(34.dp).height(120.dp).clip(RoundedCornerShape(17.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.BottomCenter) {
+            Box(Modifier.fillMaxWidth().fillMaxHeight(f).clip(RoundedCornerShape(17.dp)).background(if (hi) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)))
+        }
+        Text(label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall)
+    }
+}
