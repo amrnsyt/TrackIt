@@ -1,6 +1,11 @@
 package com.trackit
 
+import android.Manifest
 import android.content.ComponentName
+import android.content.pm.PackageManager
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -42,6 +47,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         Store.init(this)
+        intent.getStringExtra("txn")?.let { Store.openId.value = it }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         setContent {
             val dark = androidx.compose.foundation.isSystemInDarkTheme()
             val scheme = if (Build.VERSION.SDK_INT >= 31) {
@@ -55,6 +63,11 @@ class MainActivity : ComponentActivity() {
                 )
             ) { App() }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra("txn")?.let { Store.openId.value = it }
     }
 }
 
@@ -103,6 +116,19 @@ fun App() {
     var dlg by remember { mutableStateOf(false) }
     var addT by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Category?>(null) }
+    var menu by remember { mutableStateOf(false) }
+    val bk = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let {
+            val ok = runCatching { ctx.contentResolver.openOutputStream(it)!!.use { o -> o.write(Store.backup().toByteArray()) } }.isSuccess
+            Toast.makeText(ctx, if (ok) "Backup saved" else "Backup failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val rs = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            val ok = runCatching { Store.restore(ctx.contentResolver.openInputStream(it)!!.bufferedReader().readText()) }.isSuccess
+            Toast.makeText(ctx, if (ok) "Data restored" else "Invalid backup file", Toast.LENGTH_SHORT).show()
+        }
+    }
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
         val o = LifecycleEventObserver { _, e ->
@@ -111,7 +137,18 @@ fun App() {
         owner.lifecycle.addObserver(o); onDispose { owner.lifecycle.removeObserver(o) }
     }
     Scaffold(
-        topBar = { LargeTopAppBar(title = { Text("Track It!", fontWeight = FontWeight.Black) }) },
+        topBar = {
+            LargeTopAppBar(
+                title = { Text("Track It!", fontWeight = FontWeight.Black) },
+                actions = {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Menu") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Backup data") }, onClick = { menu = false; bk.launch("TrackIt-backup.json") })
+                        DropdownMenuItem(text = { Text("Restore data") }, onClick = { menu = false; rs.launch(arrayOf("*/*")) })
+                    }
+                }
+            )
+        },
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(tab == 0, { tab = 0 }, { Icon(Icons.Filled.Receipt, null) }, label = { Text("Activity") })
@@ -150,6 +187,10 @@ fun App() {
     }
     if (dlg) CatDialog(editing) { dlg = false }
     if (addT) AddTxnDialog { addT = false }
+    Store.openId.value?.let { id ->
+        val t = Store.txns.find { it.id == id }
+        if (t != null) { EditTxnDialog(t) { Store.openId.value = null } } else { Store.openId.value = null }
+    }
 }
 
 @Composable
@@ -190,21 +231,7 @@ fun Activity() {
             )
         }
     }
-    pick?.let { t ->
-        AlertDialog(
-            onDismissRequest = { pick = null },
-            title = { Text("Category") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    (Store.cats.map { it.name } + "Uncategorized").forEach { n ->
-                        TextButton(onClick = { Store.setCat(t, n); pick = null }) { Text(n) }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { Store.delTxn(t); pick = null }) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { pick = null }) { Text("Close") } }
-        )
-    }
+    pick?.let { t -> EditTxnDialog(t) { pick = null } }
 }
 
 @Composable
@@ -345,4 +372,36 @@ fun AddTxnDialog(close: () -> Unit) {
             }
         ) { DatePicker(state = st) }
     }
+}
+
+@Composable
+fun EditTxnDialog(t: Txn, close: () -> Unit) {
+    var amt by remember(t.id) { mutableStateOf("%.2f".format(t.amount)) }
+    var mer by remember(t.id) { mutableStateOf(t.merchant) }
+    var cat by remember(t.id) { mutableStateOf(t.category) }
+    val v = amt.replace(",", ".").toDoubleOrNull()
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text("Edit payment") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(amt, { amt = it }, label = { Text("Amount RM") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                OutlinedTextField(mer, { mer = it }, label = { Text("Merchant") }, singleLine = true)
+                Text("Category", style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    (Store.cats.map { it.name } + "Uncategorized").forEach { n ->
+                        FilterChip(selected = cat == n, onClick = { cat = n }, label = { Text(n) })
+                    }
+                }
+                TextButton(onClick = { Store.delTxn(t); close() }) { Text("Delete payment", color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = v != null && v > 0, onClick = {
+                Store.updateTxn(t, t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = cat)); close()
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = close) { Text("Cancel") } }
+    )
 }

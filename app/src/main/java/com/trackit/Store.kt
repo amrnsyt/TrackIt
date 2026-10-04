@@ -2,6 +2,7 @@ package com.trackit
 
 import android.content.Context
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
@@ -21,9 +22,18 @@ object Store {
     private lateinit var ctx: Context
     private fun sp() = ctx.getSharedPreferences("trackit", Context.MODE_PRIVATE)
 
+    val openId = mutableStateOf<String?>(null)
+
     @Synchronized fun init(c: Context) {
         if (ready) return
         ctx = c.applicationContext
+        load()
+        ready = true
+        rollover()
+    }
+
+    private fun load() {
+        cats.clear(); txns.clear(); snaps.clear()
         val s = sp()
         JSONArray(s.getString("cats", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let {
@@ -46,8 +56,19 @@ object Store {
                 snaps.add(Snap(it.getString("i"), it.getString("c"), it.getLong("s"), it.getLong("e"), it.getDouble("b"), it.getDouble("a")))
             }
         }
-        ready = true
-        rollover()
+    }
+
+    fun backup(): String {
+        val s = sp()
+        return JSONObject().put("app", "TrackIt").put("cats", JSONArray(s.getString("cats", "[]")))
+            .put("txns", JSONArray(s.getString("txns", "[]"))).put("snaps", JSONArray(s.getString("snaps", "[]"))).toString()
+    }
+
+    fun restore(json: String) {
+        val o = JSONObject(json)
+        val c = o.getJSONArray("cats"); val t = o.getJSONArray("txns"); val h = o.optJSONArray("snaps") ?: JSONArray()
+        sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString()).apply()
+        load(); rollover()
     }
 
     private fun save() {
@@ -119,19 +140,35 @@ object Store {
     fun delTxn(t: Txn) { txns.remove(t); save() }
     fun setCat(t: Txn, cat: String) { val i = txns.indexOf(t); if (i >= 0) { txns[i] = t.copy(category = cat); save() } }
     private const val WALLET = "com.google.android.apps.walletnfcrel"
-    fun addTxn(t: Txn) {
+    fun addTxn(t: Txn): Txn? {
         rollover()
-        if (txns.any { it.id == t.id }) return
+        if (txns.any { it.id == t.id }) return null
         val i = txns.indexOfFirst { Math.abs(it.amount - t.amount) < 0.005 && Math.abs(it.time - t.time) < 3 * 60 * 1000 }
         if (i >= 0) {
             val old = txns[i]
             if (t.id.startsWith(WALLET) && !old.id.startsWith(WALLET)) {
-                txns[i] = t.copy(category = if (t.category == "Uncategorized") old.category else t.category)
+                txns[i] = t.copy(id = old.id, category = if (t.category == "Uncategorized") old.category else t.category)
                 save()
             }
-            return
+            return null
         }
         txns.add(0, t); save()
+        return t
+    }
+    fun updateTxn(old: Txn, n: Txn) {
+        val i = txns.indexOf(old); if (i < 0) return
+        txns[i] = n
+        if (old.category == "Uncategorized" && n.category != "Uncategorized") learn(n.category, n.merchant)
+        save()
+    }
+    private fun learn(cat: String, m: String) {
+        val k = m.trim().lowercase()
+        if (k.isEmpty() || k == "manual") return
+        val i = cats.indexOfFirst { it.name == cat }; if (i < 0) return
+        val c = cats[i]
+        if (c.keywords.split(",").map { it.trim().lowercase() }.contains(k)) return
+        cats[i] = c.copy(keywords = if (c.keywords.isBlank()) k else c.keywords.trim().trimEnd(',') + "," + k)
+        reclassify()
     }
     fun addManual(t: Txn) {
         rollover()
