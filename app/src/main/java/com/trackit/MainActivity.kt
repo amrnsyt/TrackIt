@@ -9,7 +9,16 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.animateColorAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import kotlin.math.absoluteValue
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
@@ -54,7 +63,18 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("txn")?.let { Store.openId.value = it }
         if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        setContent { TrackItTheme { App() } }
+        setContent {
+            val mode = Store.theme.value
+            val dark = mode == "DARK" || (mode == "SYSTEM" && isSystemInDarkTheme())
+            DisposableEffect(dark) {
+                enableEdgeToEdge(
+                    statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark },
+                    navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark }
+                )
+                onDispose { }
+            }
+            TrackItTheme(mode) { App() }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -93,17 +113,25 @@ fun weekDays(): List<Long> {
     return (0..6).map { val x = c.timeInMillis; c.add(Calendar.DAY_OF_MONTH, 1); x }
 }
 
+fun Modifier.bounceClick(onClick: () -> Unit): Modifier = composed {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val s by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = 0.55f, stiffness = 450f), label = "press")
+    this.graphicsLayer { scaleX = s; scaleY = s }.clickable(interactionSource = src, indication = ripple(), onClick = onClick)
+}
+
 @Composable
-fun NavItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
-    val col = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(Modifier.clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, null, tint = col)
+fun NavItem(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    val col by animateColorAsState(if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, label = "nc")
+    val pill by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else Color.Transparent, label = "np")
+    Column(Modifier.clip(MaterialTheme.shapes.medium).bounceClick(onClick).padding(horizontal = 8.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.clip(CircleShape).background(pill).padding(horizontal = 16.dp, vertical = 4.dp)) { Icon(icon, null, tint = col) }
         Text(label, style = MaterialTheme.typography.labelSmall, color = col, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
 }
 
 @Composable
-fun BottomBar(page: Int, go: (Int) -> Unit, onAdd: () -> Unit, onBackup: () -> Unit, onRestore: () -> Unit) {
+fun BottomBar(page: Int, go: (Int) -> Unit, onAdd: () -> Unit, onBackup: () -> Unit, onRestore: () -> Unit, theme: String, onTheme: (String) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp), shadowElevation = 12.dp) {
         Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
@@ -117,6 +145,10 @@ fun BottomBar(page: Int, go: (Int) -> Unit, onAdd: () -> Unit, onBackup: () -> U
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("Backup data") }, leadingIcon = { Icon(Icons.Filled.Upload, null) }, onClick = { menu = false; onBackup() })
                     DropdownMenuItem(text = { Text("Restore data") }, leadingIcon = { Icon(Icons.Filled.Download, null) }, onClick = { menu = false; onRestore() })
+                    HorizontalDivider()
+                    listOf(Triple("SYSTEM", "Theme: System", Icons.Filled.SettingsBrightness), Triple("LIGHT", "Theme: Light", Icons.Filled.LightMode), Triple("DARK", "Theme: Dark", Icons.Filled.DarkMode)).forEach { (k, l, ic) ->
+                        DropdownMenuItem(text = { Text(l) }, leadingIcon = { Icon(ic, null) }, trailingIcon = { if (theme == k) Icon(Icons.Filled.Check, "Selected") }, onClick = { menu = false; onTheme(k) })
+                    }
                 }
             }
         }
@@ -156,15 +188,23 @@ fun App() {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snack) },
-        bottomBar = { BottomBar(pager.currentPage, go, { addT = true }, { bk.launch("TrackIt-backup.json") }, { rs.launch(arrayOf("*/*")) }) }
+        bottomBar = { BottomBar(pager.currentPage, go, { addT = true }, { bk.launch("TrackIt-backup.json") }, { rs.launch(arrayOf("*/*")) }, Store.theme.value) { Store.setTheme(it) } }
     ) { pad ->
         Column(Modifier.padding(pad)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(when (pager.currentPage) { 0 -> greeting(); 1 -> "Budgets"; else -> "History" }, style = MaterialTheme.typography.headlineLarge)
+                    Crossfade(pager.currentPage, label = "title") { p ->
+                        Text(when (p) { 0 -> greeting(); 1 -> "Budgets"; else -> "History" }, style = MaterialTheme.typography.headlineLarge)
+                    }
                     Text(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Surface(onClick = { if (!enabled) ctx.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) },
+                Surface(onClick = {
+                    val open = { ctx.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); Unit }
+                    if (!enabled) open() else scope.launch {
+                        snack.currentSnackbarData?.dismiss()
+                        if (snack.showSnackbar("Tracking is on. Payment alerts are being recorded.", "Settings", duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) open()
+                    }
+                },
                     modifier = Modifier.size(48.dp), shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerLow) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(if (enabled) Icons.Filled.NotificationsActive else Icons.Filled.NotificationsOff,
@@ -186,10 +226,15 @@ fun App() {
                 }
             }
             HorizontalPager(pager, Modifier.weight(1f), beyondViewportPageCount = 1) { page ->
-                when (page) {
-                    0 -> Activity(del, { go(1) })
-                    1 -> Budgets({ editing = it; catSheet = true }, { editing = null; catSheet = true })
-                    else -> History()
+                Box(Modifier.graphicsLayer {
+                    val off = ((pager.currentPage - page) + pager.currentPageOffsetFraction).absoluteValue.coerceIn(0f, 1f)
+                    alpha = 1f - off * 0.5f; scaleX = 1f - off * 0.05f; scaleY = 1f - off * 0.05f
+                }) {
+                    when (page) {
+                        0 -> Activity(del, { go(1) })
+                        1 -> Budgets({ editing = it; catSheet = true }, { editing = null; catSheet = true })
+                        else -> History()
+                    }
                 }
             }
         }
@@ -204,7 +249,7 @@ fun App() {
 
 @Composable
 fun DayChip(d: Long, selected: Boolean, has: Boolean, onClick: () -> Unit) {
-    Column(Modifier.clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.clip(MaterialTheme.shapes.medium).bounceClick(onClick).padding(2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(SimpleDateFormat("EEE", Locale.getDefault()).format(Date(d)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(6.dp))
         Box(Modifier.size(40.dp).clip(CircleShape).background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLow), contentAlignment = Alignment.Center) {

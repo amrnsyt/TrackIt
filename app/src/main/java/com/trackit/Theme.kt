@@ -46,10 +46,11 @@ private val DarkC = darkColorScheme(
 )
 
 @Composable
-fun TrackItTheme(content: @Composable () -> Unit) {
+fun TrackItTheme(mode: String = "SYSTEM", content: @Composable () -> Unit) {
+    val dark = when (mode) { "DARK" -> true; "LIGHT" -> false; else -> isSystemInDarkTheme() }
     val t = Typography()
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkC else LightC,
+        colorScheme = if (dark) DarkC else LightC,
         typography = t.copy(
             displayLarge = t.displayLarge.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-2).sp),
             displayMedium = t.displayMedium.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp),

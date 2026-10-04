@@ -23,10 +23,13 @@ object Store {
     private fun sp() = ctx.getSharedPreferences("trackit", Context.MODE_PRIVATE)
 
     val openId = mutableStateOf<String?>(null)
+    val theme = mutableStateOf("SYSTEM")
+    fun setTheme(v: String) { theme.value = v; sp().edit().putString("theme", v).apply() }
 
     @Synchronized fun init(c: Context) {
         if (ready) return
         ctx = c.applicationContext
+        theme.value = sp().getString("theme", "SYSTEM") ?: "SYSTEM"
         load()
         ready = true
         rollover()
