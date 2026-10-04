@@ -106,20 +106,41 @@ object Store {
 
     fun spent(c: Category): Double = txns.filter { it.category == c.name && it.time >= c.periodStart }.sumOf { it.amount }
 
-    fun addCat(c: Category) { cats.add(c.copy(periodStart = startOf(c))); save() }
+    fun addCat(c: Category) { cats.add(c.copy(periodStart = startOf(c))); reclassify(); save() }
     fun editCat(old: Category, n: Category) {
         val i = cats.indexOf(old); if (i < 0) return
         val ps = if (old.period != n.period || old.startDay != n.startDay) startOf(n) else old.periodStart
         cats[i] = n.copy(periodStart = ps)
         if (old.name != n.name) for (j in txns.indices) if (txns[j].category == old.name) txns[j] = txns[j].copy(category = n.name)
+        reclassify()
         save()
     }
     fun delCat(c: Category) { cats.remove(c); save() }
     fun delTxn(t: Txn) { txns.remove(t); save() }
     fun setCat(t: Txn, cat: String) { val i = txns.indexOf(t); if (i >= 0) { txns[i] = t.copy(category = cat); save() } }
-    fun addTxn(t: Txn) { rollover(); if (txns.none { it.id == t.id }) { txns.add(0, t); save() } }
+    private const val WALLET = "com.google.android.apps.walletnfcrel"
+    fun addTxn(t: Txn) {
+        rollover()
+        if (txns.any { it.id == t.id }) return
+        val i = txns.indexOfFirst { Math.abs(it.amount - t.amount) < 0.005 && Math.abs(it.time - t.time) < 3 * 60 * 1000 }
+        if (i >= 0) {
+            val old = txns[i]
+            if (t.id.startsWith(WALLET) && !old.id.startsWith(WALLET)) {
+                txns[i] = t.copy(category = if (t.category == "Uncategorized") old.category else t.category)
+                save()
+            }
+            return
+        }
+        txns.add(0, t); save()
+    }
+    private fun reclassify() {
+        for (j in txns.indices) if (txns[j].category == "Uncategorized") {
+            val c = classify(txns[j].merchant)
+            if (c != "Uncategorized") txns[j] = txns[j].copy(category = c)
+        }
+    }
     fun classify(text: String): String {
         val l = text.lowercase()
-        return cats.firstOrNull { c -> c.keywords.split(",").map { it.trim() }.filter { it.isNotEmpty() }.any { l.contains(it) } }?.name ?: "Uncategorized"
+        return cats.firstOrNull { c -> c.keywords.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }.any { l.contains(it) } }?.name ?: "Uncategorized"
     }
 }
