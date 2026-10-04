@@ -3,31 +3,37 @@ package com.trackit
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
-import android.provider.Settings
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -56,16 +62,51 @@ private fun listenerOn(c: android.content.Context): Boolean =
     Settings.Secure.getString(c.contentResolver, "enabled_notification_listeners")
         ?.contains(ComponentName(c, PayListener::class.java).flattenToString()) == true
 
+fun rm(v: Double) = "RM %,.2f".format(v)
+fun fmtDate(t: Long): String = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(t))
+fun periodLabel(c: Category) = when (c.period) {
+    "DAILY" -> "Daily"; "WEEKLY" -> "Weekly"; "YEARLY" -> "Yearly"; else -> "Monthly (day ${c.startDay})"
+}
+
+@Composable
+fun barColor(v: Double, b: Double): Color = when {
+    b <= 0 -> MaterialTheme.colorScheme.primary
+    v > b -> MaterialTheme.colorScheme.error
+    v >= 0.8 * b -> MaterialTheme.colorScheme.tertiary
+    else -> MaterialTheme.colorScheme.primary
+}
+
+@Composable
+fun CatBar(name: String, spent: Double, budget: Double, share: Float, sub: String = "") {
+    val f = if (budget > 0) (spent / budget).toFloat().coerceIn(0f, 1f) else share
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(name, fontWeight = FontWeight.SemiBold)
+            Text(if (budget > 0) "${rm(spent)} / ${rm(budget)}" else rm(spent))
+        }
+        LinearProgressIndicator(
+            progress = { f }, color = barColor(spent, budget),
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(10.dp), strokeCap = StrokeCap.Round
+        )
+        val st = if (budget > 0) (if (spent > budget) "Over by ${rm(spent - budget)}" else "Left ${rm(budget - spent)}") else ""
+        val line = listOf(sub, st).filter { it.isNotEmpty() }.joinToString(" • ")
+        if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App() {
     val ctx = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
     var enabled by remember { mutableStateOf(listenerOn(ctx)) }
-    var addCat by remember { mutableStateOf(false) }
+    var dlg by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<Category?>(null) }
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
-        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) enabled = listenerOn(ctx) }
+        val o = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) { enabled = listenerOn(ctx); Store.rollover() }
+        }
         owner.lifecycle.addObserver(o); onDispose { owner.lifecycle.removeObserver(o) }
     }
     Scaffold(
@@ -73,11 +114,14 @@ fun App() {
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(tab == 0, { tab = 0 }, { Icon(Icons.Filled.Receipt, null) }, label = { Text("Activity") })
-                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(Icons.Filled.Category, null) }, label = { Text("Categories") })
+                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(Icons.Filled.Category, null) }, label = { Text("Budgets") })
+                NavigationBarItem(tab == 2, { tab = 2 }, { Icon(Icons.Filled.History, null) }, label = { Text("History") })
             }
         },
         floatingActionButton = {
-            if (tab == 1) ExtendedFloatingActionButton(onClick = { addCat = true }, icon = { Icon(Icons.Filled.Add, null) }, text = { Text("New category") })
+            if (tab == 1) ExtendedFloatingActionButton(
+                onClick = { editing = null; dlg = true },
+                icon = { Icon(Icons.Filled.Add, null) }, text = { Text("New category") })
         }
     ) { pad ->
         Column(Modifier.padding(pad).padding(horizontal = 16.dp)) {
@@ -93,17 +137,23 @@ fun App() {
                     }
                 }
             }
-            if (tab == 0) Activity() else Categories()
+            when (tab) {
+                0 -> Activity()
+                1 -> Categories { editing = it; dlg = true }
+                else -> History()
+            }
         }
     }
-    if (addCat) CatDialog { addCat = false }
+    if (dlg) CatDialog(editing) { dlg = false }
 }
 
 @Composable
 fun Activity() {
     var pick by remember { mutableStateOf<Txn?>(null) }
-    val total = Store.txns.sumOf { it.amount }
-    val by = Store.txns.groupBy { it.category }.mapValues { e -> e.value.sumOf { it.amount } }.toList().sortedByDescending { it.second }
+    val rows = Store.cats.map { it to Store.spent(it) }
+    val cal = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
+    val unc = Store.txns.filter { it.category == "Uncategorized" && it.time >= cal.timeInMillis }.sumOf { it.amount }
+    val total = rows.sumOf { it.second } + unc
     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Card(
@@ -112,29 +162,25 @@ fun Activity() {
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             ) {
                 Column(Modifier.padding(24.dp)) {
-                    Text("Total spent", style = MaterialTheme.typography.labelLarge)
-                    Text("RM %,.2f".format(total), fontSize = 44.sp, fontWeight = FontWeight.Black)
-                    Spacer(Modifier.height(8.dp))
-                    by.forEach { (n, v) ->
-                        val f = if (total > 0) (v / total).toFloat() else 0f
-                        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(n, fontWeight = FontWeight.Medium); Text("RM %,.2f".format(v))
-                        }
-                        LinearProgressIndicator(progress = { f }, Modifier.fillMaxWidth().height(10.dp), strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
+                    Text("Spent this period", style = MaterialTheme.typography.labelLarge)
+                    Text(rm(total), fontSize = 40.sp, fontWeight = FontWeight.Black)
+                    rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }.forEach { (c, v) ->
+                        CatBar(c.name, v, c.budget, if (total > 0) (v / total).toFloat() else 0f, periodLabel(c))
                     }
+                    if (unc > 0) CatBar("Uncategorized", unc, 0.0, if (total > 0) (unc / total).toFloat() else 0f, "This month")
                 }
             }
         }
         if (Store.txns.isEmpty()) item {
             Text("No payments yet. Pay with QR / Paywave and the alert will appear here.", Modifier.padding(24.dp), style = MaterialTheme.typography.bodyLarge)
         }
-        items(Store.txns, key = { it.id }) { t ->
+        items(Store.txns.toList(), key = { it.id }) { t ->
             ListItem(
                 modifier = Modifier.clip(MaterialTheme.shapes.large).clickable { pick = t },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                 headlineContent = { Text(t.merchant, maxLines = 1, fontWeight = FontWeight.SemiBold) },
                 supportingContent = { Text(t.category + " • " + SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()).format(Date(t.time))) },
-                trailingContent = { Text("RM %.2f".format(t.amount), fontWeight = FontWeight.Bold) },
+                trailingContent = { Text(rm(t.amount), fontWeight = FontWeight.Bold) },
                 leadingContent = { Icon(Icons.Filled.Payments, null) },
             )
         }
@@ -144,7 +190,7 @@ fun Activity() {
             onDismissRequest = { pick = null },
             title = { Text("Category") },
             text = {
-                Column {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     (Store.cats.map { it.name } + "Uncategorized").forEach { n ->
                         TextButton(onClick = { Store.setCat(t, n); pick = null }) { Text(n) }
                     }
@@ -157,34 +203,89 @@ fun Activity() {
 }
 
 @Composable
-fun Categories() {
+fun Categories(onEdit: (Category) -> Unit) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 96.dp)) {
         items(Store.cats.toList(), key = { it.name }) { c ->
-            ListItem(
-                modifier = Modifier.clip(MaterialTheme.shapes.large),
-                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                headlineContent = { Text(c.name, fontWeight = FontWeight.Bold) },
-                supportingContent = { Text(c.keywords.ifBlank { "No keywords" }) },
-                trailingContent = { IconButton(onClick = { Store.delCat(c) }) { Icon(Icons.Filled.Delete, "Delete") } }
-            )
+            Card(
+                Modifier.fillMaxWidth().clickable { onEdit(c) },
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+            ) {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(c.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Filled.Edit, "Edit")
+                    }
+                    CatBar("Spent", Store.spent(c), c.budget, 0f, periodLabel(c) + " • from " + fmtDate(c.periodStart))
+                    Text(c.keywords.ifBlank { "No keywords" }, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
         }
     }
 }
 
 @Composable
-fun CatDialog(close: () -> Unit) {
-    var n by remember { mutableStateOf("") }
-    var k by remember { mutableStateOf("") }
+fun History() {
+    if (Store.snaps.isEmpty()) {
+        Text("No past periods yet. When a budget period ends, its summary is saved here.", Modifier.padding(24.dp))
+        return
+    }
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+        items(Store.snaps.toList(), key = { it.id }) { s ->
+            Card(
+                Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+            ) {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+                    Text(s.category, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(fmtDate(s.start) + " – " + fmtDate(s.end - 1), style = MaterialTheme.typography.labelMedium)
+                    CatBar("Spent", s.spent, s.budget, 0f)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CatDialog(edit: Category?, close: () -> Unit) {
+    var n by remember { mutableStateOf(edit?.name ?: "") }
+    var k by remember { mutableStateOf(edit?.keywords ?: "") }
+    var b by remember { mutableStateOf(edit?.budget?.takeIf { it > 0 }?.let { "%.2f".format(it) } ?: "") }
+    var p by remember { mutableStateOf(edit?.period ?: "MONTHLY") }
+    var d by remember { mutableStateOf((edit?.startDay ?: 1).toString()) }
+    val dup = Store.cats.any { it.name.equals(n.trim(), true) && it.name != edit?.name }
     AlertDialog(
         onDismissRequest = close,
-        title = { Text("New category") },
+        title = { Text(if (edit == null) "New category" else "Edit category") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(n, { n = it }, label = { Text("Name") }, singleLine = true)
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(n, { n = it }, label = { Text("Name") }, singleLine = true, isError = dup,
+                    supportingText = { if (dup) Text("Name already used") })
                 OutlinedTextField(k, { k = it }, label = { Text("Keywords (comma separated)") })
+                OutlinedTextField(b, { b = it }, label = { Text("Budget RM (optional)") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                Text("Reset budget", style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("DAILY" to "Day", "WEEKLY" to "Week", "MONTHLY" to "Month", "YEARLY" to "Year").forEach { (key, lbl) ->
+                        FilterChip(selected = p == key, onClick = { p = key }, label = { Text(lbl) })
+                    }
+                }
+                if (p == "MONTHLY") OutlinedTextField(d, { d = it.filter { ch -> ch.isDigit() }.take(2) },
+                    label = { Text("Reset on day of month (1-28)") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                if (edit != null) TextButton(onClick = { Store.delCat(edit); close() }) {
+                    Text("Delete category", color = MaterialTheme.colorScheme.error)
+                }
             }
         },
-        confirmButton = { TextButton(enabled = n.isNotBlank(), onClick = { Store.addCat(Category(n.trim(), k.trim())); close() }) { Text("Save") } },
+        confirmButton = {
+            TextButton(enabled = n.isNotBlank() && !dup, onClick = {
+                val nc = Category(n.trim(), k.trim(), b.replace(",", ".").toDoubleOrNull() ?: 0.0, p,
+                    d.toIntOrNull()?.coerceIn(1, 28) ?: 1, edit?.periodStart ?: 0L)
+                if (edit == null) Store.addCat(nc) else Store.editCat(edit, nc)
+                close()
+            }) { Text("Save") }
+        },
         dismissButton = { TextButton(onClick = close) { Text("Cancel") } }
     )
 }
