@@ -14,7 +14,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
+import androidx.compose.foundation.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -77,7 +81,48 @@ fun dayLabel(t: Long): String {
     return SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(Date(t))
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+fun greeting(): String {
+    val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    return if (h < 12) "Good morning" else if (h < 18) "Good afternoon" else "Good evening"
+}
+fun weekDays(): List<Long> {
+    val c = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        add(Calendar.DAY_OF_MONTH, -((get(Calendar.DAY_OF_WEEK) + 5) % 7))
+    }
+    return (0..6).map { val x = c.timeInMillis; c.add(Calendar.DAY_OF_MONTH, 1); x }
+}
+
+@Composable
+fun NavItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    val col = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, null, tint = col)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = col, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+    }
+}
+
+@Composable
+fun BottomBar(page: Int, go: (Int) -> Unit, onAdd: () -> Unit, onBackup: () -> Unit, onRestore: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp), shadowElevation = 12.dp) {
+        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
+            NavItem(Icons.Filled.Home, "Home", page == 0) { go(0) }
+            NavItem(Icons.Filled.PieChart, "Budgets", page == 1) { go(1) }
+            FloatingActionButton(onClick = onAdd, modifier = Modifier.size(58.dp), shape = CircleShape,
+                containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) { Icon(Icons.Filled.Add, "Add payment") }
+            NavItem(Icons.Filled.History, "History", page == 2) { go(2) }
+            Box {
+                NavItem(Icons.Filled.MoreHoriz, "More", false) { menu = true }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Backup data") }, leadingIcon = { Icon(Icons.Filled.Upload, null) }, onClick = { menu = false; onBackup() })
+                    DropdownMenuItem(text = { Text("Restore data") }, leadingIcon = { Icon(Icons.Filled.Download, null) }, onClick = { menu = false; onRestore() })
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun App() {
     val ctx = LocalContext.current
@@ -85,11 +130,9 @@ fun App() {
     val snack = remember { SnackbarHostState() }
     val pager = rememberPagerState { 3 }
     var enabled by remember { mutableStateOf(listenerOn(ctx)) }
-    var menu by remember { mutableStateOf(false) }
     var addT by remember { mutableStateOf(false) }
     var catSheet by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Category?>(null) }
-    val sb = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     fun say(m: String) { scope.launch { snack.showSnackbar(m) } }
     val del: (Txn) -> Unit = { t ->
         Store.delTxn(t)
@@ -111,47 +154,29 @@ fun App() {
     }
     val go: (Int) -> Unit = { i -> scope.launch { pager.animateScrollToPage(i) } }
     Scaffold(
-        modifier = Modifier.nestedScroll(sb.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            LargeTopAppBar(
-                title = { Text("Track It!", fontWeight = FontWeight.ExtraBold) }, scrollBehavior = sb,
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
-                actions = {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "More options") }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Backup data") }, leadingIcon = { Icon(Icons.Filled.Upload, null) }, onClick = { menu = false; bk.launch("TrackIt-backup.json") })
-                        DropdownMenuItem(text = { Text("Restore data") }, leadingIcon = { Icon(Icons.Filled.Download, null) }, onClick = { menu = false; rs.launch(arrayOf("*/*")) })
-                    }
-                }
-            )
-        },
         snackbarHost = { SnackbarHost(snack) },
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-                listOf(Icons.Filled.Receipt to "Activity", Icons.Filled.PieChart to "Budgets", Icons.Filled.History to "History").forEachIndexed { i, (ic, l) ->
-                    NavigationBarItem(pager.currentPage == i, { go(i) }, { Icon(ic, null) }, label = { Text(l) })
-                }
-            }
-        },
-        floatingActionButton = {
-            AnimatedVisibility(pager.currentPage < 2, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
-                ExtendedFloatingActionButton(
-                    onClick = { if (pager.currentPage == 0) addT = true else { editing = null; catSheet = true } },
-                    icon = { Icon(Icons.Filled.Add, null) }, text = { Text(if (pager.currentPage == 0) "Add payment" else "New category") },
-                    containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-        }
+        bottomBar = { BottomBar(pager.currentPage, go, { addT = true }, { bk.launch("TrackIt-backup.json") }, { rs.launch(arrayOf("*/*")) }) }
     ) { pad ->
         Column(Modifier.padding(pad)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(when (pager.currentPage) { 0 -> greeting(); 1 -> "Budgets"; else -> "History" }, style = MaterialTheme.typography.headlineLarge)
+                    Text(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Surface(onClick = { if (!enabled) ctx.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) },
+                    modifier = Modifier.size(48.dp), shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(if (enabled) Icons.Filled.NotificationsActive else Icons.Filled.NotificationsOff,
+                            if (enabled) "Tracking is on" else "Tracking is off, tap to enable",
+                            tint = if (enabled) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
             AnimatedVisibility(!enabled) {
-                Card(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp), shape = MaterialTheme.shapes.large,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer)
-                ) {
+                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp), shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer)) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(Icons.Filled.NotificationsActive, null)
                         Column(Modifier.weight(1f)) {
                             Text("Payments aren't being tracked", fontWeight = FontWeight.Bold)
                             Text("Allow notification access to detect payment alerts.", style = MaterialTheme.typography.bodySmall)
@@ -163,7 +188,7 @@ fun App() {
             HorizontalPager(pager, Modifier.weight(1f), beyondViewportPageCount = 1) { page ->
                 when (page) {
                     0 -> Activity(del, { go(1) })
-                    1 -> Budgets { editing = it; catSheet = true }
+                    1 -> Budgets({ editing = it; catSheet = true }, { editing = null; catSheet = true })
                     else -> History()
                 }
             }
@@ -177,10 +202,29 @@ fun App() {
     }
 }
 
+@Composable
+fun DayChip(d: Long, selected: Boolean, has: Boolean, onClick: () -> Unit) {
+    Column(Modifier.clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(SimpleDateFormat("EEE", Locale.getDefault()).format(Date(d)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        Box(Modifier.size(40.dp).clip(CircleShape).background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLow), contentAlignment = Alignment.Center) {
+            Text(SimpleDateFormat("d", Locale.getDefault()).format(Date(d)), fontWeight = FontWeight.Bold, color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
+        }
+        Box(Modifier.padding(top = 4.dp).size(5.dp).clip(CircleShape).background(if (has) MaterialTheme.colorScheme.primary else Color.Transparent))
+    }
+}
+
+private val pastels = listOf(0xFFF6D5CC, 0xFFDCD6FA, 0xFFE3DFD0, 0xFFD3E8CF).map { Color(it) }
+private val ink = Color(0xFF2B2620)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     var pick by remember { mutableStateOf<Txn?>(null) }
+    var sel by remember { mutableStateOf<Long?>(null) }
+    val week = remember { weekDays() }
+    val now = System.currentTimeMillis()
+    val today = week.firstOrNull { now - it in 0 until 86400000L } ?: week[0]
     val rows = Store.cats.map { it to Store.spent(it) }
     val monthStart = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
     val unc = Store.txns.filter { it.category == "Uncategorized" && it.time >= monthStart }.sumOf { it.amount }
@@ -189,8 +233,15 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     val bTotal = budgeted.sumOf { it.first.budget }; val bSpent = budgeted.sumOf { it.second }
     val shown by animateFloatAsState(total.toFloat(), tween(600), label = "total")
     val needs = Store.txns.count { it.category == "Uncategorized" }
-    val groups = Store.txns.groupBy { dayLabel(it.time) }
-    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 110.dp)) {
+    val list0 = sel?.let { s -> Store.txns.filter { it.time >= s && it.time < s + 86400000L } } ?: Store.txns
+    val groups = list0.groupBy { dayLabel(it.time) }
+    val cards = rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }
+    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                week.forEach { d -> DayChip(d, (sel ?: today) == d, Store.txns.any { it.time >= d && it.time < d + 86400000L }) { sel = if (sel == d) null else d } }
+            }
+        }
         item {
             Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)) {
@@ -199,40 +250,42 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
                     Text(rm(shown.toDouble()), style = MaterialTheme.typography.displayMedium)
                     if (bTotal > 0) {
                         Spacer(Modifier.height(12.dp))
-                        BudgetBar(bSpent, bTotal)
+                        BudgetBar(bSpent, bTotal, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
                         Text("${statusText(bSpent, bTotal)} of ${rm(bTotal)} budget", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium)
                     }
                     Spacer(Modifier.height(14.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Pill("${Store.txns.size} payments", MaterialTheme.colorScheme.surface.copy(alpha = .5f), MaterialTheme.colorScheme.onPrimaryContainer)
+                        Pill("${Store.txns.size} payments", Color.White.copy(alpha = 0.55f), MaterialTheme.colorScheme.onPrimaryContainer)
                         if (needs > 0) Pill("$needs need a category", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
                     }
                 }
             }
         }
-        if (rows.any { it.second > 0 }) {
+        if (cards.isNotEmpty()) {
             item { SectionLabel("Categories") }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }, key = { it.first.name }) { (c, v) ->
-                        Card(modifier = Modifier.width(158.dp), shape = MaterialTheme.shapes.large, onClick = goBudgets,
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                CatAvatar(c.name, 36.dp)
-                                Text(c.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(rm(v), style = MaterialTheme.typography.titleMedium)
-                                if (c.budget > 0) BudgetBar(v, c.budget) else Spacer(Modifier.height(10.dp))
+                    itemsIndexed(cards, key = { _, p -> p.first.name }) { i, (c, v) ->
+                        Card(modifier = Modifier.width(172.dp), shape = MaterialTheme.shapes.large, onClick = goBudgets,
+                            colors = CardDefaults.cardColors(containerColor = pastels[i % pastels.size], contentColor = ink)) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(c.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(if (c.budget > 0) "${rm(v)} of ${rm(c.budget)}" else "${rm(v)} spent", style = MaterialTheme.typography.bodySmall)
+                                if (c.budget > 0) BudgetBar(v, c.budget, color = ink, track = ink.copy(alpha = 0.12f)) else Spacer(Modifier.height(10.dp))
+                                Pill(periodLabel(c), Color.White, ink)
                             }
                         }
                     }
                 }
             }
         }
-        if (Store.txns.isEmpty()) item {
-            EmptyState(Icons.Filled.Contactless, "No payments yet", "Pay with QR or Paywave and it appears here automatically. You can also add one manually.")
+        item { SectionLabel(if (sel == null) "Recent activity" else dayLabel(sel!!)) }
+        if (list0.isEmpty()) item {
+            EmptyState(Icons.Filled.Contactless, if (sel == null) "No payments yet" else "No payments this day",
+                if (sel == null) "Pay with QR or Paywave and it appears here automatically, or tap + to add one." else "Tap the selected day again to see everything.")
         }
         groups.forEach { (day, list) ->
-            item(key = "h$day") { SectionLabel(day) }
+            if (sel == null) item(key = "h$day") { SectionLabel(day) }
             items(list, key = { it.id }) { t ->
                 val st = rememberSwipeToDismissBoxState(confirmValueChange = { if (it == SwipeToDismissBoxValue.EndToStart) { onDelete(t); true } else false })
                 SwipeToDismissBox(state = st, modifier = Modifier.animateItem().clip(MaterialTheme.shapes.large), enableDismissFromStartToEnd = false, backgroundContent = {
@@ -262,8 +315,33 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
 }
 
 @Composable
-fun Budgets(onEdit: (Category) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 110.dp)) {
+fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
+    val rows = Store.cats.map { it to Store.spent(it) }
+    val total = rows.sumOf { it.second }
+    val top = rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }.take(8)
+    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+        item {
+            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(rm(total), style = MaterialTheme.typography.displayMedium)
+                Text("spent across ${Store.cats.size} categories this period", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Spending by category", style = MaterialTheme.typography.titleMedium)
+                    Text("Bars show budget used, or share of spending when no budget is set.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(16.dp))
+                    if (top.isEmpty()) Text("Add payments to see your chart.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        top.forEach { (c, v) ->
+                            val frac = if (c.budget > 0) (v / c.budget).toFloat() else if (total > 0) (v / total).toFloat() else 0f
+                            PillBar(c.name, frac, catColor(c.name), "${(frac * 100).toInt()}%")
+                        }
+                    }
+                }
+            }
+        }
         if (Store.cats.isEmpty()) item { EmptyState(Icons.Filled.PieChart, "No categories", "Create a category to group payments and set a budget.") }
         items(Store.cats.toList(), key = { it.name }) { c ->
             val v = Store.spent(c)
@@ -283,13 +361,14 @@ fun Budgets(onEdit: (Category) -> Unit) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("${rm(v)} of ${rm(c.budget)}", style = MaterialTheme.typography.bodyMedium)
                             Text(statusText(v, c.budget), style = MaterialTheme.typography.labelLarge,
-                                color = if (v > c.budget) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                                color = if (v > c.budget) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary)
                         }
                     } else Text("${rm(v)} spent · no budget set", style = MaterialTheme.typography.bodyMedium)
                     if (c.keywords.isNotBlank()) Text(c.keywords, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
+        item { Spacer(Modifier.height(6.dp)); PrimaryButton("Create a new category") { onNew() } }
     }
 }
 

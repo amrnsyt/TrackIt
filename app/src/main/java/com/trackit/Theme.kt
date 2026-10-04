@@ -29,48 +29,48 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val LightC = lightColorScheme(
-    primary = Color(0xFF00696B), onPrimary = Color.White, primaryContainer = Color(0xFFB4F0F0), onPrimaryContainer = Color(0xFF002020),
-    secondary = Color(0xFF4A6363), secondaryContainer = Color(0xFFCCE8E8), onSecondaryContainer = Color(0xFF051F1F),
-    tertiary = Color(0xFF8A5100), tertiaryContainer = Color(0xFFFFDCBE), onTertiaryContainer = Color(0xFF2C1600),
-    background = Color(0xFFF4FAFA), surface = Color(0xFFF4FAFA), surfaceContainerLowest = Color.White,
-    surfaceContainerLow = Color(0xFFEEF5F5), surfaceContainer = Color(0xFFE8EFEF),
-    surfaceContainerHigh = Color(0xFFE3E9E9), surfaceContainerHighest = Color(0xFFDDE4E4), outlineVariant = Color(0xFFBEC8C8)
+    primary = Color(0xFFFFB81F), onPrimary = Color(0xFF1F1500), primaryContainer = Color(0xFFFFC53D), onPrimaryContainer = Color(0xFF2A1F00),
+    secondary = Color(0xFF78715F), secondaryContainer = Color(0xFFD8CEC1), onSecondaryContainer = Color(0xFF2E2820),
+    tertiary = Color(0xFF7C9A2D), onTertiary = Color.White, tertiaryContainer = Color(0xFFF6D5CC), onTertiaryContainer = Color(0xFF5A1D12),
+    background = Color(0xFFF0EEEA), surface = Color(0xFFF0EEEA), onBackground = Color(0xFF1E1B16), onSurface = Color(0xFF1E1B16), onSurfaceVariant = Color(0xFF6B645A),
+    surfaceContainerLowest = Color.White, surfaceContainerLow = Color.White, surfaceContainer = Color(0xFFFAF8F5),
+    surfaceContainerHigh = Color(0xFFE9E5DE), surfaceContainerHighest = Color(0xFFE4DFD6), outlineVariant = Color(0xFFD6D0C6)
 )
 private val DarkC = darkColorScheme(
-    primary = Color(0xFF80D5D6), onPrimary = Color(0xFF003737), primaryContainer = Color(0xFF004F50), onPrimaryContainer = Color(0xFFB4F0F0),
-    secondary = Color(0xFFB0CCCC), secondaryContainer = Color(0xFF324B4B), onSecondaryContainer = Color(0xFFCCE8E8),
-    tertiary = Color(0xFFFFB86B), tertiaryContainer = Color(0xFF693C00), onTertiaryContainer = Color(0xFFFFDCBE),
-    background = Color(0xFF0E1415), surface = Color(0xFF0E1415), surfaceContainerLowest = Color(0xFF090F10),
-    surfaceContainerLow = Color(0xFF161D1D), surfaceContainer = Color(0xFF1A2121),
-    surfaceContainerHigh = Color(0xFF252B2C), surfaceContainerHighest = Color(0xFF303637), outlineVariant = Color(0xFF3F4948)
+    primary = Color(0xFFFFC145), onPrimary = Color(0xFF2A1F00), primaryContainer = Color(0xFFFFC145), onPrimaryContainer = Color(0xFF2A1F00),
+    secondary = Color(0xFFB5AD9F), secondaryContainer = Color(0xFF4A433A), onSecondaryContainer = Color(0xFFE8DFD2),
+    tertiary = Color(0xFFA3C14A), onTertiary = Color(0xFF1D2600), tertiaryContainer = Color(0xFF5A3A33), onTertiaryContainer = Color(0xFFF6D5CC),
+    background = Color(0xFF141210), surface = Color(0xFF141210), onBackground = Color(0xFFEAE4DA), onSurface = Color(0xFFEAE4DA), onSurfaceVariant = Color(0xFFB5AD9F),
+    surfaceContainerLowest = Color(0xFF0F0D0B), surfaceContainerLow = Color(0xFF1F1C18), surfaceContainer = Color(0xFF26221D),
+    surfaceContainerHigh = Color(0xFF2E2A24), surfaceContainerHighest = Color(0xFF3A352E), outlineVariant = Color(0xFF4A443B)
 )
 
 @Composable
 fun TrackItTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    val c = LocalContext.current
-    val scheme = if (Build.VERSION.SDK_INT >= 31) { if (dark) dynamicDarkColorScheme(c) else dynamicLightColorScheme(c) } else if (dark) DarkC else LightC
     val t = Typography()
     MaterialTheme(
-        colorScheme = scheme,
+        colorScheme = if (isSystemInDarkTheme()) DarkC else LightC,
         typography = t.copy(
+            displayLarge = t.displayLarge.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-2).sp),
             displayMedium = t.displayMedium.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp),
+            headlineLarge = t.headlineLarge.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp),
             headlineSmall = t.headlineSmall.copy(fontWeight = FontWeight.Bold),
             titleMedium = t.titleMedium.copy(fontWeight = FontWeight.SemiBold)
         ),
         shapes = Shapes(
-            extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(16.dp),
-            large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(32.dp)
+            extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(14.dp), medium = RoundedCornerShape(20.dp),
+            large = RoundedCornerShape(28.dp), extraLarge = RoundedCornerShape(36.dp)
         ),
         content = content
     )
 }
 
-private val palette = listOf(0xFF2E9E8F, 0xFFE57C3A, 0xFF5C7CFA, 0xFFD6477A, 0xFF8E6BD8, 0xFFB59A1B, 0xFF3BA55D, 0xFFD9534F).map { Color(it) }
+private val palette = listOf(0xFFFFB81F, 0xFF744438, 0xFF86A02E, 0xFF78715F, 0xFFD6477A, 0xFF5C7CFA, 0xFFE57C3A, 0xFF8E6BD8).map { Color(it) }
+fun catColor(name: String): Color = palette[Math.abs(name.hashCode()) % palette.size]
 
 @Composable
 fun CatAvatar(name: String, size: Dp = 44.dp) {
-    val c = if (name == "Uncategorized") MaterialTheme.colorScheme.onSurfaceVariant else palette[Math.abs(name.hashCode()) % palette.size]
+    val c = if (name == "Uncategorized") MaterialTheme.colorScheme.onSurfaceVariant else catColor(name)
     Box(Modifier.size(size).clip(CircleShape).background(c.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
         Text(if (name == "Uncategorized") "?" else name.take(1).uppercase(), color = c, fontWeight = FontWeight.Bold, fontSize = (size.value * 0.42f).sp)
     }
@@ -84,17 +84,17 @@ fun Pill(text: String, bg: Color, fg: Color) {
 }
 
 @Composable
-fun BudgetBar(spent: Double, budget: Double, modifier: Modifier = Modifier) {
+fun BudgetBar(spent: Double, budget: Double, modifier: Modifier = Modifier, color: Color? = null, track: Color? = null) {
     val f by animateFloatAsState(if (budget > 0) (spent / budget).toFloat().coerceIn(0f, 1f) else 0f, tween(700), label = "bar")
-    val col = when {
+    val col = color ?: when {
         budget <= 0 -> MaterialTheme.colorScheme.primary
         spent > budget -> MaterialTheme.colorScheme.error
-        spent >= 0.8 * budget -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.primary
+        spent >= 0.8 * budget -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.tertiary
     }
     LinearProgressIndicator(
         progress = { f }, modifier = modifier.fillMaxWidth().height(10.dp), color = col,
-        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest, strokeCap = StrokeCap.Round, gapSize = 0.dp, drawStopIndicator = {}
+        trackColor = track ?: MaterialTheme.colorScheme.surfaceContainerHighest, strokeCap = StrokeCap.Round, gapSize = 0.dp, drawStopIndicator = {}
     )
 }
 
@@ -144,3 +144,16 @@ fun Chips(options: List<Pair<String, String>>, selected: String, onSel: (String)
 @Composable
 fun PrimaryButton(text: String, enabled: Boolean = true, onClick: () -> Unit) =
     Button(onClick, Modifier.fillMaxWidth().height(54.dp), enabled = enabled) { Text(text, fontWeight = FontWeight.SemiBold) }
+
+@Composable
+fun PillBar(label: String, frac: Float, color: Color, text: String) {
+    val f by animateFloatAsState(if (frac <= 0f) 0.05f else frac.coerceIn(0.12f, 1f), tween(800), label = "pill")
+    Column(Modifier.width(72.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.width(66.dp).height(210.dp).clip(RoundedCornerShape(33.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.BottomCenter) {
+            Box(Modifier.fillMaxWidth().fillMaxHeight(f).clip(RoundedCornerShape(33.dp)).background(color), contentAlignment = Alignment.BottomCenter) {
+                Text(text, Modifier.padding(bottom = 14.dp), color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+        Text(label, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
