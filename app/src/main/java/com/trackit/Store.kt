@@ -133,6 +133,11 @@ object Store {
         }
         txns.add(0, t); save()
     }
+    fun addManual(t: Txn) {
+        rollover()
+        val l = (txns + t).sortedByDescending { it.time }
+        txns.clear(); txns.addAll(l); save()
+    }
     private fun reclassify() {
         for (j in txns.indices) if (txns[j].category == "Uncategorized") {
             val c = classify(txns[j].merchant)

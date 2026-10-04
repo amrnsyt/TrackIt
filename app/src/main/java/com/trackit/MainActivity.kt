@@ -101,6 +101,7 @@ fun App() {
     var tab by remember { mutableIntStateOf(0) }
     var enabled by remember { mutableStateOf(listenerOn(ctx)) }
     var dlg by remember { mutableStateOf(false) }
+    var addT by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Category?>(null) }
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
@@ -122,6 +123,9 @@ fun App() {
             if (tab == 1) ExtendedFloatingActionButton(
                 onClick = { editing = null; dlg = true },
                 icon = { Icon(Icons.Filled.Add, null) }, text = { Text("New category") })
+            else if (tab == 0) ExtendedFloatingActionButton(
+                onClick = { addT = true },
+                icon = { Icon(Icons.Filled.Add, null) }, text = { Text("Add payment") })
         }
     ) { pad ->
         Column(Modifier.padding(pad).padding(horizontal = 16.dp)) {
@@ -145,6 +149,7 @@ fun App() {
         }
     }
     if (dlg) CatDialog(editing) { dlg = false }
+    if (addT) AddTxnDialog { addT = false }
 }
 
 @Composable
@@ -154,7 +159,7 @@ fun Activity() {
     val cal = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
     val unc = Store.txns.filter { it.category == "Uncategorized" && it.time >= cal.timeInMillis }.sumOf { it.amount }
     val total = rows.sumOf { it.second } + unc
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 96.dp)) {
         item {
             Card(
                 Modifier.fillMaxWidth().animateContentSize(),
@@ -288,4 +293,56 @@ fun CatDialog(edit: Category?, close: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = close) { Text("Cancel") } }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddTxnDialog(close: () -> Unit) {
+    var amt by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var cat by remember { mutableStateOf("Uncategorized") }
+    var time by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var pickDate by remember { mutableStateOf(false) }
+    val v = amt.replace(",", ".").toDoubleOrNull()
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text("Add payment") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(amt, { amt = it }, label = { Text("Amount RM") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                OutlinedTextField(note, { note = it }, label = { Text("Merchant / note") }, singleLine = true)
+                Text("Category", style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    (Store.cats.map { it.name } + "Uncategorized").forEach { n ->
+                        FilterChip(selected = cat == n, onClick = { cat = n }, label = { Text(n) })
+                    }
+                }
+                OutlinedButton(onClick = { pickDate = true }) {
+                    Icon(Icons.Filled.Event, null); Spacer(Modifier.width(8.dp)); Text(fmtDate(time))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = v != null && v > 0, onClick = {
+                Store.addManual(Txn("manual:${System.nanoTime()}", v!!, note.trim().ifBlank { "Manual" }, cat, time)); close()
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = close) { Text("Cancel") } }
+    )
+    if (pickDate) {
+        val st = rememberDatePickerState(initialSelectedDateMillis = time)
+        DatePickerDialog(
+            onDismissRequest = { pickDate = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    st.selectedDateMillis?.let { ms ->
+                        val u = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = ms }
+                        time = Calendar.getInstance().apply { set(u.get(Calendar.YEAR), u.get(Calendar.MONTH), u.get(Calendar.DAY_OF_MONTH)) }.timeInMillis
+                    }
+                    pickDate = false
+                }) { Text("OK") }
+            }
+        ) { DatePicker(state = st) }
+    }
 }
