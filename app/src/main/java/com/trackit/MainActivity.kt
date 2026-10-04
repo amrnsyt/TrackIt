@@ -215,7 +215,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }, key = { it.first.name }) { (c, v) ->
-                        Card(Modifier.width(158.dp), shape = MaterialTheme.shapes.large, onClick = goBudgets,
+                        Card(modifier = Modifier.width(158.dp), shape = MaterialTheme.shapes.large, onClick = goBudgets,
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 CatAvatar(c.name, 36.dp)
@@ -267,7 +267,7 @@ fun Budgets(onEdit: (Category) -> Unit) {
         if (Store.cats.isEmpty()) item { EmptyState(Icons.Filled.PieChart, "No categories", "Create a category to group payments and set a budget.") }
         items(Store.cats.toList(), key = { it.name }) { c ->
             val v = Store.spent(c)
-            Card(Modifier.fillMaxWidth().animateItem(), shape = MaterialTheme.shapes.large, onClick = { onEdit(c) },
+            Card(modifier = Modifier.fillMaxWidth().animateItem(), shape = MaterialTheme.shapes.large, onClick = { onEdit(c) },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
