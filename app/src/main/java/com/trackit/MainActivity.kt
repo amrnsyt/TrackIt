@@ -90,7 +90,7 @@ private fun listenerOn(c: android.content.Context): Boolean =
 fun rm(v: Double) = "RM %,.2f".format(v)
 fun fmtDate(t: Long): String = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(t))
 fun periodLabel(c: Category) = when (c.period) {
-    "DAILY" -> "Daily"; "WEEKLY" -> "Weekly"; "YEARLY" -> "Yearly"; else -> "Monthly · day ${c.startDay}"
+    "DAILY" -> "Daily"; "CYCLE" -> "Salary cycle"; "WEEKLY" -> "Weekly"; "YEARLY" -> "Yearly"; else -> "Monthly · day ${c.startDay}"
 }
 fun dayLabel(t: Long): String {
     val now = Calendar.getInstance(); val d = Calendar.getInstance().apply { timeInMillis = t }
@@ -131,26 +131,15 @@ fun NavItem(icon: ImageVector, label: String, selected: Boolean, onClick: () -> 
 }
 
 @Composable
-fun BottomBar(page: Int, go: (Int) -> Unit, onAdd: () -> Unit, onBackup: () -> Unit, onRestore: () -> Unit, theme: String, onTheme: (String) -> Unit) {
-    var menu by remember { mutableStateOf(false) }
+fun BottomBar(page: Int, go: (Int) -> Unit, onAdd: () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp), shadowElevation = 12.dp) {
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 4.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
             NavItem(Icons.Filled.Home, "Home", page == 0) { go(0) }
             NavItem(Icons.Filled.PieChart, "Budgets", page == 1) { go(1) }
             FloatingActionButton(onClick = onAdd, modifier = Modifier.size(58.dp), shape = CircleShape,
                 containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) { Icon(Icons.Filled.Add, "Add payment") }
-            NavItem(Icons.Filled.History, "History", page == 2) { go(2) }
-            Box {
-                NavItem(Icons.Filled.MoreHoriz, "More", false) { menu = true }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("Backup data") }, leadingIcon = { Icon(Icons.Filled.Upload, null) }, onClick = { menu = false; onBackup() })
-                    DropdownMenuItem(text = { Text("Restore data") }, leadingIcon = { Icon(Icons.Filled.Download, null) }, onClick = { menu = false; onRestore() })
-                    HorizontalDivider()
-                    listOf(Triple("SYSTEM", "Theme: System", Icons.Filled.SettingsBrightness), Triple("LIGHT", "Theme: Light", Icons.Filled.LightMode), Triple("DARK", "Theme: Dark", Icons.Filled.DarkMode)).forEach { (k, l, ic) ->
-                        DropdownMenuItem(text = { Text(l) }, leadingIcon = { Icon(ic, null) }, trailingIcon = { if (theme == k) Icon(Icons.Filled.Check, "Selected") }, onClick = { menu = false; onTheme(k) })
-                    }
-                }
-            }
+            NavItem(Icons.Filled.Savings, "Salary", page == 2) { go(2) }
+            NavItem(Icons.Filled.History, "History", page == 3) { go(3) }
         }
     }
 }
@@ -160,8 +149,9 @@ fun App() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
-    val pager = rememberPagerState { 3 }
+    val pager = rememberPagerState { 4 }
     var enabled by remember { mutableStateOf(listenerOn(ctx)) }
+    var menu by remember { mutableStateOf(false) }
     var addT by remember { mutableStateOf(false) }
     var catSheet by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Category?>(null) }
@@ -188,16 +178,30 @@ fun App() {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snack) },
-        bottomBar = { BottomBar(pager.currentPage, go, { addT = true }, { bk.launch("TrackIt-backup.json") }, { rs.launch(arrayOf("*/*")) }, Store.theme.value) { Store.setTheme(it) } }
+        bottomBar = { BottomBar(pager.currentPage, go) { addT = true } }
     ) { pad ->
         Column(Modifier.padding(pad)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Crossfade(pager.currentPage, label = "title") { p ->
-                        Text(when (p) { 0 -> greeting(); 1 -> "Budgets"; else -> "History" }, style = MaterialTheme.typography.headlineLarge)
+                        Text(when (p) { 0 -> greeting(); 1 -> "Budgets"; 2 -> "Commitment"; else -> "History" }, style = MaterialTheme.typography.headlineLarge)
                     }
                     Text(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                Box {
+                    Surface(onClick = { menu = true }, modifier = Modifier.size(48.dp), shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.MoreHoriz, "More options") }
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Backup data") }, leadingIcon = { Icon(Icons.Filled.Upload, null) }, onClick = { menu = false; bk.launch("TrackIt-backup.json") })
+                        DropdownMenuItem(text = { Text("Restore data") }, leadingIcon = { Icon(Icons.Filled.Download, null) }, onClick = { menu = false; rs.launch(arrayOf("*/*")) })
+                        HorizontalDivider()
+                        listOf(Triple("SYSTEM", "Theme: System", Icons.Filled.SettingsBrightness), Triple("LIGHT", "Theme: Light", Icons.Filled.LightMode), Triple("DARK", "Theme: Dark", Icons.Filled.DarkMode)).forEach { (k, l, ic) ->
+                            DropdownMenuItem(text = { Text(l) }, leadingIcon = { Icon(ic, null) }, trailingIcon = { if (Store.theme.value == k) Icon(Icons.Filled.Check, "Selected") }, onClick = { menu = false; Store.setTheme(k) })
+                        }
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
                 Surface(onClick = {
                     val open = { ctx.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); Unit }
                     if (!enabled) open() else scope.launch {
@@ -233,6 +237,7 @@ fun App() {
                     when (page) {
                         0 -> Activity(del, { go(1) })
                         1 -> Budgets({ editing = it; catSheet = true }, { editing = null; catSheet = true })
+                        2 -> Commitment()
                         else -> History()
                     }
                 }
@@ -274,12 +279,16 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     val rows = Store.cats.map { it to Store.spent(it) }
     val monthStart = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
     val unc = Store.txns.filter { it.category == "Uncategorized" && it.time >= monthStart }.sumOf { it.amount }
-    val total = rows.sumOf { it.second } + unc
+    val cyc = Store.cycle.value
+    val total = if (cyc != null) Store.cycleSpent() else rows.sumOf { it.second } + unc
+    val base = if (cyc != null) Store.txns.filter { it.time >= cyc.start } else Store.txns.toList()
+    val cleft = Store.cycleLeft()
+    val dl = cyc?.takeIf { it.next > now }?.let { Math.ceil((it.next - now) / 86400000.0).toInt().coerceAtLeast(1) }
     val budgeted = rows.filter { it.first.budget > 0 }
     val bTotal = budgeted.sumOf { it.first.budget }; val bSpent = budgeted.sumOf { it.second }
     val shown by animateFloatAsState(total.toFloat(), tween(600), label = "total")
-    val needs = Store.txns.count { it.category == "Uncategorized" }
-    val list0 = sel?.let { s -> Store.txns.filter { it.time >= s && it.time < s + 86400000L } } ?: Store.txns
+    val needs = base.count { it.category == "Uncategorized" }
+    val list0 = sel?.let { s -> base.filter { it.time >= s && it.time < s + 86400000L } } ?: base
     val groups = list0.groupBy { dayLabel(it.time) }
     val cards = rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
@@ -292,8 +301,9 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
             Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)) {
                 Column(Modifier.padding(24.dp).animateContentSize()) {
-                    Text("Spent this period", style = MaterialTheme.typography.labelLarge)
+                    Text(if (cyc != null) "Spent this cycle" else "Spent this period", style = MaterialTheme.typography.labelLarge)
                     Text(rm(shown.toDouble()), style = MaterialTheme.typography.displayMedium)
+                    if (cyc != null) Text(if (dl != null && cleft > 0) "${rm(cleft)} left · ${rm(cleft / dl)}/day for $dl days" else "${rm(cleft)} left this cycle", style = MaterialTheme.typography.titleSmall)
                     if (bTotal > 0) {
                         Spacer(Modifier.height(12.dp))
                         BudgetBar(bSpent, bTotal, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
@@ -301,7 +311,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
                     }
                     Spacer(Modifier.height(14.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Pill("${Store.txns.size} payments", Color.White.copy(alpha = 0.55f), MaterialTheme.colorScheme.onPrimaryContainer)
+                        Pill("${base.size} payments", Color.White.copy(alpha = 0.55f), MaterialTheme.colorScheme.onPrimaryContainer)
                         if (needs > 0) Pill("$needs need a category", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
                     }
                 }
@@ -338,14 +348,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
         groups.forEach { (day, list) ->
             if (sel == null) item(key = "h$day") { SectionLabel(day) }
             items(list, key = { it.id }) { t ->
-                val st = rememberSwipeToDismissBoxState(confirmValueChange = { if (it == SwipeToDismissBoxValue.EndToStart) { onDelete(t); true } else false })
-                SwipeToDismissBox(state = st, modifier = Modifier.animateItem().clip(MaterialTheme.shapes.large), enableDismissFromStartToEnd = false, backgroundContent = {
-                    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.errorContainer).padding(end = 24.dp), contentAlignment = Alignment.CenterEnd) {
-                        Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.onErrorContainer)
-                    }
-                }) {
-                    TxnRow(t) { pick = t }
-                }
+                Box(Modifier.animateItem().clip(MaterialTheme.shapes.large)) { TxnRow(t) { pick = t } }
             }
         }
     }
@@ -415,7 +418,8 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
 @Composable
 fun History() {
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 110.dp)) {
-        if (Store.snaps.isEmpty()) item { EmptyState(Icons.Filled.History, "Nothing here yet", "When a budget period ends, its summary is saved here automatically.") }
+        if (Store.snaps.isEmpty() && Store.csnaps.isEmpty()) item { EmptyState(Icons.Filled.History, "Nothing here yet", "When a budget period ends, its summary is saved here automatically.") }
+        items(Store.csnaps.toList(), key = { it.id }) { c -> CycleSnapCard(c) }
         items(Store.snaps.toList(), key = { it.id }) { s ->
             Card(Modifier.fillMaxWidth().animateItem(), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -511,7 +515,7 @@ fun CatSheet(edit: Category?, close: () -> Unit) {
         Field(k, { k = it }, "Keywords (comma separated)")
         Field(b, { b = it }, "Budget RM (optional)", KeyboardType.Decimal)
         SectionLabel("Budget resets")
-        Chips(listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MONTHLY" to "Monthly", "YEARLY" to "Yearly"), p) { p = it }
+        Chips(listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MONTHLY" to "Monthly", "YEARLY" to "Yearly", "CYCLE" to "Salary cycle"), p) { p = it }
         AnimatedVisibility(p == "MONTHLY") { Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Reset on day of month (1-28)", KeyboardType.Number) }
         PrimaryButton("Save category", n.isNotBlank() && !dup) {
             val nc = Category(n.trim(), k.trim(), b.replace(",", ".").toDoubleOrNull() ?: 0.0, p, d.toIntOrNull()?.coerceIn(1, 28) ?: 1, edit?.periodStart ?: 0L)
@@ -600,6 +604,173 @@ fun TrendCard() {
                 if (monthly && prev > 0) "This month ${rm(cur)} · ${Math.abs(((cur - prev) / prev * 100).toInt())}% ${if (cur >= prev) "more" else "less"} than last month"
                 else if (monthly) "This month ${rm(cur)}" else "Today ${rm(cur)} · yesterday ${rm(prev)}",
                 style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+fun CycleSnapCard(c: CSnap) {
+    val left = c.salary - c.committed - c.spent
+    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Savings, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("Salary cycle", style = MaterialTheme.typography.titleMedium)
+                    Text(fmtDate(c.start) + " – " + fmtDate(c.end - 1), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Pill(if (left >= 0) "Saved ${rm(left)}" else "Over ${rm(-left)}",
+                    if (left >= 0) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
+                    if (left >= 0) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer)
+            }
+            BudgetBar(c.committed + c.spent, c.salary)
+            Text("Salary ${rm(c.salary)} · spent ${rm(c.spent)} · unpaid commitments ${rm(c.committed)}", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+fun todayStart(): Long = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
+
+@Composable
+fun Commitment() {
+    val cyc = Store.cycle.value
+    var sheet by remember { mutableStateOf<String?>(null) }
+    var editItem by remember { mutableStateOf<Item?>(null) }
+    var addItem by remember { mutableStateOf(false) }
+    val left = Store.cycleLeft()
+    val spent = Store.cycleSpent()
+    val now = System.currentTimeMillis()
+    val dl = cyc?.takeIf { it.next > now }?.let { Math.ceil((it.next - now) / 86400000.0).toInt().coerceAtLeast(1) }
+    val dark = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onPrimaryContainer, contentColor = MaterialTheme.colorScheme.primaryContainer)
+    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+        item {
+            Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (cyc == null) {
+                        Text("Start your salary cycle", style = MaterialTheme.typography.headlineSmall)
+                        Text("Enter your salary and the date it arrived. Pick which commitments you need to pay this cycle.")
+                        Button({ sheet = "new" }, Modifier.fillMaxWidth().height(54.dp), colors = dark) { Text("Start first cycle", fontWeight = FontWeight.SemiBold) }
+                    } else {
+                        Text("Salary since ${fmtDate(cyc.start)}", style = MaterialTheme.typography.labelLarge)
+                        Text(rm(cyc.salary), style = MaterialTheme.typography.displayMedium)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column { Text("Unpaid commitments", style = MaterialTheme.typography.labelMedium); Text(rm(Store.unpaid()), fontWeight = FontWeight.Bold) }
+                            Column { Text("Spent", style = MaterialTheme.typography.labelMedium); Text(rm(spent), fontWeight = FontWeight.Bold) }
+                            Column { Text("Left", style = MaterialTheme.typography.labelMedium); Text(rm(left), fontWeight = FontWeight.Bold) }
+                        }
+                        BudgetBar(spent + Store.unpaid(), cyc.salary, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
+                        Text(if (dl != null && left > 0) "Safe to spend ${rm(left / dl)}/day for $dl days" else if (cyc.next > 0) "Next salary: ${fmtDate(cyc.next)}" else "Set the next salary date to see a daily limit",
+                            style = MaterialTheme.typography.titleSmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button({ sheet = "new" }, colors = dark) { Text("Start new cycle") }
+                            TextButton({ sheet = "edit" }) { Text("Edit salary", color = MaterialTheme.colorScheme.onPrimaryContainer) }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                SectionLabel("Commitments this cycle")
+                TextButton({ addItem = true }) { Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add") }
+            }
+        }
+        if (Store.items.isEmpty()) item { EmptyState(Icons.Filled.Event, "No commitments", "Add rent, loans or bills you need to pay this cycle. Saved ones can be picked again next cycle.") }
+        items(Store.items.sortedBy { it.due }, key = { it.id }) { i ->
+            Card(modifier = Modifier.fillMaxWidth().animateItem(), shape = MaterialTheme.shapes.large, onClick = { editItem = i },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                Row(Modifier.padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(i.paid, { Store.togglePaid(i) })
+                    Column(Modifier.weight(1f)) {
+                        Text(i.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (i.paid) "Paid" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid", style = MaterialTheme.typography.bodySmall,
+                            color = if (i.paid) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(rm(i.amount), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 10.dp))
+                }
+            }
+        }
+    }
+    sheet?.let { CycleSheet(it == "new") { sheet = null } }
+    if (addItem) ItemSheet(null) { addItem = false }
+    editItem?.let { ItemSheet(it) { editItem = null } }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DateButton(label: String, value: Long, onPick: (Long) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    OutlinedButton({ open = true }, Modifier.fillMaxWidth().height(52.dp)) {
+        Icon(Icons.Filled.Event, null); Spacer(Modifier.width(8.dp)); Text("$label: " + if (value > 0) fmtDate(value) else "not set")
+    }
+    if (open) {
+        val st = rememberDatePickerState(initialSelectedDateMillis = if (value > 0) value else System.currentTimeMillis())
+        DatePickerDialog({ open = false }, confirmButton = {
+            TextButton({
+                st.selectedDateMillis?.let { ms ->
+                    val u = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = ms }
+                    onPick(Calendar.getInstance().apply { clear(); set(u.get(Calendar.YEAR), u.get(Calendar.MONTH), u.get(Calendar.DAY_OF_MONTH)) }.timeInMillis)
+                }
+                open = false
+            }) { Text("OK") }
+        }) { DatePicker(st) }
+    }
+}
+
+@Composable
+fun CycleSheet(newCycle: Boolean, close: () -> Unit) {
+    val cyc = Store.cycle.value
+    var sal by remember { mutableStateOf(cyc?.salary?.let { "%.2f".format(it) } ?: "") }
+    var recv by remember { mutableLongStateOf(todayStart()) }
+    var next by remember { mutableLongStateOf(cyc?.next ?: 0L) }
+    val chosen = remember { mutableStateListOf<String>().apply { addAll(Store.tpls.map { it.id }) } }
+    val v = sal.replace(",", ".").toDoubleOrNull()
+    Sheet(if (newCycle) "Start new cycle" else "Edit salary", close) {
+        Field(sal, { sal = it }, "Salary RM", KeyboardType.Decimal)
+        if (newCycle) DateButton("Salary received", recv) { recv = it }
+        DateButton("Next salary (estimate)", next) { next = it }
+        if (next > 0) TextButton({ next = 0L }) { Text("Clear next salary date") }
+        if (newCycle) {
+            SectionLabel("Commitments to pay this cycle")
+            if (Store.tpls.isEmpty()) Text("No saved commitments yet. Add them after starting the cycle.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Store.tpls.forEach { t ->
+                Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable { if (t.id in chosen) chosen.remove(t.id) else chosen.add(t.id) }, verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(t.id in chosen, { if (it) chosen.add(t.id) else chosen.remove(t.id) })
+                    Text(t.name, Modifier.weight(1f)); Text(rm(t.amount))
+                }
+            }
+        }
+        PrimaryButton(if (newCycle) "Start cycle" else "Save", v != null && v > 0) {
+            if (newCycle) Store.startCycle(v!!, recv, next, Store.tpls.filter { it.id in chosen }) else Store.editCycle(v!!, next)
+            close()
+        }
+    }
+}
+
+@Composable
+fun ItemSheet(old: Item?, close: () -> Unit) {
+    var n by remember { mutableStateOf(old?.name ?: "") }
+    var a by remember { mutableStateOf(old?.amount?.let { "%.2f".format(it) } ?: "") }
+    var d by remember { mutableStateOf(old?.due?.takeIf { it > 0 }?.toString() ?: "") }
+    var keep by remember { mutableStateOf(true) }
+    val v = a.replace(",", ".").toDoubleOrNull()
+    Sheet(if (old == null) "Add commitment" else "Edit commitment", close) {
+        Field(n, { n = it }, "Name")
+        Field(a, { a = it }, "Amount RM", KeyboardType.Decimal)
+        Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Due day of month (optional)", KeyboardType.Number)
+        if (old == null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Save to my list for future cycles", Modifier.weight(1f)); Switch(keep, { keep = it })
+        }
+        PrimaryButton("Save", n.isNotBlank() && v != null && v > 0) {
+            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false), keep)
+            close()
+        }
+        if (old != null) {
+            TextButton({ Store.delItem(old, false); close() }, Modifier.fillMaxWidth()) { Text("Remove from this cycle", color = MaterialTheme.colorScheme.error) }
+            if (Store.tpls.any { it.id == old.id }) TextButton({ Store.delItem(old, true); close() }, Modifier.fillMaxWidth()) { Text("Remove from my list too", color = MaterialTheme.colorScheme.error) }
         }
     }
 }
