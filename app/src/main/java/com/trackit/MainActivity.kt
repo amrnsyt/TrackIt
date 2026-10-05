@@ -88,6 +88,7 @@ private fun listenerOn(c: android.content.Context): Boolean =
         ?.contains(ComponentName(c, PayListener::class.java).flattenToString()) == true
 
 fun rm(v: Double) = "RM %,.2f".format(v)
+fun mk(s: String) = if (Store.hideBal.value) "RM ••••" else s
 fun fmtDate(t: Long): String = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(t))
 fun periodLabel(c: Category) = when (c.period) {
     "DAILY" -> "Daily"; "CYCLE" -> "Salary cycle"; "WEEKLY" -> "Weekly"; "YEARLY" -> "Yearly"; else -> "Monthly · day ${c.startDay}"
@@ -303,7 +304,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
                 Column(Modifier.padding(24.dp).animateContentSize()) {
                     Text(if (cyc != null) "Spent this cycle" else "Spent this period", style = MaterialTheme.typography.labelLarge)
                     Text(rm(shown.toDouble()), style = MaterialTheme.typography.displayMedium)
-                    if (cyc != null) Text(if (dl != null && cleft > 0) "${rm(cleft)} left · ${rm(cleft / dl)}/day for $dl days" else "${rm(cleft)} left this cycle", style = MaterialTheme.typography.titleSmall)
+                    if (cyc != null) Text(if (Store.hideBal.value) "Balance hidden" else if (dl != null && cleft > 0) "${rm(cleft)} left · ${rm(cleft / dl)}/day for $dl days" else "${rm(cleft)} left this cycle", style = MaterialTheme.typography.titleSmall)
                     if (bTotal > 0) {
                         Spacer(Modifier.height(12.dp))
                         BudgetBar(bSpent, bTotal, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
@@ -454,6 +455,7 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
     var mer by remember(t.id) { mutableStateOf(t.merchant) }
     var cat by remember(t.id) { mutableStateOf(t.category) }
     var inc by remember(t.id) { mutableStateOf(t.income) }
+    var cnt by remember(t.id) { mutableStateOf(t.counted) }
     val v = amt.replace(",", ".").toDoubleOrNull()
     Sheet("Edit payment", close) {
         Field(amt, { amt = it }, "Amount RM", KeyboardType.Decimal, if (v == null || v <= 0) "Enter a valid amount" else null)
@@ -462,11 +464,15 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
             Text("This is income (not counted as spending)", Modifier.weight(1f))
             Switch(inc, { inc = it })
         }
+        if (inc) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Include in salary balance", Modifier.weight(1f))
+            Switch(cnt, { cnt = it })
+        }
         if (!inc) {
             SectionLabel("Category")
             Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
         }
-        PrimaryButton("Save changes", v != null && v > 0) { Store.updateTxn(t, t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc)); close() }
+        PrimaryButton("Save changes", v != null && v > 0) { Store.updateTxn(t, t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc, counted = cnt)); close() }
         TextButton({ close(); onDelete(t) }, Modifier.fillMaxWidth()) { Text("Delete payment", color = MaterialTheme.colorScheme.error) }
     }
 }
@@ -610,7 +616,7 @@ fun TrendCard() {
 
 @Composable
 fun CycleSnapCard(c: CSnap) {
-    val left = c.salary - c.committed - c.spent
+    val left = c.salary + c.income - c.committed - c.spent
     Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -625,8 +631,8 @@ fun CycleSnapCard(c: CSnap) {
                     if (left >= 0) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
                     if (left >= 0) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer)
             }
-            BudgetBar(c.committed + c.spent, c.salary)
-            Text("Salary ${rm(c.salary)} · spent ${rm(c.spent)} · unpaid commitments ${rm(c.committed)}", style = MaterialTheme.typography.bodyMedium)
+            BudgetBar(c.committed + c.spent, c.salary + c.income)
+            Text("Salary ${rm(c.salary)}" + (if (c.income > 0) " + ${rm(c.income)} income" else "") + " · spent ${rm(c.spent)} · unpaid commitments ${rm(c.committed)}", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -640,7 +646,9 @@ fun Commitment() {
     var editItem by remember { mutableStateOf<Item?>(null) }
     var addItem by remember { mutableStateOf(false) }
     val left = Store.cycleLeft()
-    val spent = Store.cycleSpent()
+    val bal = Store.cashLeft()
+    val inc = Store.cycleIncome()
+    val spent = Store.spentAll()
     val now = System.currentTimeMillis()
     val dl = cyc?.takeIf { it.next > now }?.let { Math.ceil((it.next - now) / 86400000.0).toInt().coerceAtLeast(1) }
     val dark = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onPrimaryContainer, contentColor = MaterialTheme.colorScheme.primaryContainer)
@@ -654,15 +662,21 @@ fun Commitment() {
                         Text("Enter your salary and the date it arrived. Pick which commitments you need to pay this cycle.")
                         Button({ sheet = "new" }, Modifier.fillMaxWidth().height(54.dp), colors = dark) { Text("Start first cycle", fontWeight = FontWeight.SemiBold) }
                     } else {
-                        Text("Salary since ${fmtDate(cyc.start)}", style = MaterialTheme.typography.labelLarge)
-                        Text(rm(cyc.salary), style = MaterialTheme.typography.displayMedium)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column { Text("Unpaid commitments", style = MaterialTheme.typography.labelMedium); Text(rm(Store.unpaid()), fontWeight = FontWeight.Bold) }
-                            Column { Text("Spent", style = MaterialTheme.typography.labelMedium); Text(rm(spent), fontWeight = FontWeight.Bold) }
-                            Column { Text("Left", style = MaterialTheme.typography.labelMedium); Text(rm(left), fontWeight = FontWeight.Bold) }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Salary since ${fmtDate(cyc.start)}", style = MaterialTheme.typography.labelLarge)
+                            IconButton({ Store.setHide(!Store.hideBal.value) }) {
+                                Icon(if (Store.hideBal.value) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (Store.hideBal.value) "Show amounts" else "Hide amounts")
+                            }
                         }
-                        BudgetBar(spent + Store.unpaid(), cyc.salary, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
-                        Text(if (dl != null && left > 0) "Safe to spend ${rm(left / dl)}/day for $dl days" else if (cyc.next > 0) "Next salary: ${fmtDate(cyc.next)}" else "Set the next salary date to see a daily limit",
+                        Text(mk(rm(cyc.salary)), style = MaterialTheme.typography.displayMedium)
+                        if (inc > 0) Text("+ ${mk(rm(inc))} income counted", style = MaterialTheme.typography.labelLarge)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column { Text("Unpaid", style = MaterialTheme.typography.labelMedium); Text(mk(rm(Store.unpaid())), fontWeight = FontWeight.Bold) }
+                            Column { Text("Spent & paid", style = MaterialTheme.typography.labelMedium); Text(mk(rm(spent)), fontWeight = FontWeight.Bold) }
+                            Column { Text("Balance", style = MaterialTheme.typography.labelMedium); Text(mk(rm(bal)), fontWeight = FontWeight.Bold) }
+                        }
+                        BudgetBar(spent + Store.unpaid(), cyc.salary + inc, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
+                        Text(if (dl != null && left > 0) "Safe to spend ${mk(rm(left / dl))}/day for $dl days" else if (cyc.next > 0) "Next salary: ${fmtDate(cyc.next)}" else "Set the next salary date to see a daily limit",
                             style = MaterialTheme.typography.titleSmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button({ sheet = "new" }, colors = dark) { Text("Start new cycle") }
@@ -765,7 +779,7 @@ fun ItemSheet(old: Item?, close: () -> Unit) {
             Text("Save to my list for future cycles", Modifier.weight(1f)); Switch(keep, { keep = it })
         }
         PrimaryButton("Save", n.isNotBlank() && v != null && v > 0) {
-            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false), keep)
+            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false, old?.txnId ?: ""), keep)
             close()
         }
         if (old != null) {

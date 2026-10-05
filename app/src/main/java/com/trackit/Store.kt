@@ -16,11 +16,11 @@ data class Category(
     val name: String, val keywords: String, val budget: Double = 0.0,
     val period: String = "MONTHLY", val startDay: Int = 1, val periodStart: Long = 0L
 )
-data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false)
+data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false, val counted: Boolean = true)
 data class Tpl(val id: String, val name: String, val amount: Double, val due: Int)
-data class Item(val id: String, val name: String, val amount: Double, val due: Int, val paid: Boolean = false)
+data class Item(val id: String, val name: String, val amount: Double, val due: Int, val paid: Boolean = false, val txnId: String = "")
 data class Cycle(val start: Long, val salary: Double, val next: Long = 0L)
-data class CSnap(val id: String, val start: Long, val end: Long, val salary: Double, val committed: Double, val spent: Double)
+data class CSnap(val id: String, val start: Long, val end: Long, val salary: Double, val committed: Double, val spent: Double, val income: Double = 0.0)
 data class Snap(val id: String, val category: String, val start: Long, val end: Long, val budget: Double, val spent: Double)
 
 object Store {
@@ -37,12 +37,17 @@ object Store {
 
     val openId = mutableStateOf<String?>(null)
     val theme = mutableStateOf("SYSTEM")
+    val hideBal = mutableStateOf(false)
+    var lastPing: String? = null
+    fun setHide(v: Boolean) { hideBal.value = v; sp().edit().putBoolean("hide", v).apply() }
+    private fun cancelPing() { ctx.getSystemService(NotificationManager::class.java).cancel(1001); lastPing = null }
     fun setTheme(v: String) { theme.value = v; sp().edit().putString("theme", v).apply() }
 
     @Synchronized fun init(c: Context) {
         if (ready) return
         ctx = c.applicationContext
         theme.value = sp().getString("theme", "SYSTEM") ?: "SYSTEM"
+        hideBal.value = sp().getBoolean("hide", false)
         load()
         ready = true
         rollover()
@@ -64,7 +69,7 @@ object Store {
             Category("Bills", "tnb,unifi,maxis,celcom,digi,water")))
         JSONArray(s.getString("txns", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let {
-                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false)))
+                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false), it.optBoolean("k", true)))
             }
         }
         JSONArray(s.getString("snaps", "[]")).let { a ->
@@ -76,10 +81,10 @@ object Store {
             for (i in 0 until a.length()) a.getJSONObject(i).let { tpls.add(Tpl(it.getString("i"), it.getString("n"), it.getDouble("a"), it.getInt("d"))) }
         }
         JSONArray(s.getString("items", "[]")).let { a ->
-            for (i in 0 until a.length()) a.getJSONObject(i).let { items.add(Item(it.getString("i"), it.getString("n"), it.getDouble("a"), it.getInt("d"), it.optBoolean("p", false))) }
+            for (i in 0 until a.length()) a.getJSONObject(i).let { items.add(Item(it.getString("i"), it.getString("n"), it.getDouble("a"), it.getInt("d"), it.optBoolean("p", false), it.optString("t", ""))) }
         }
         JSONArray(s.getString("csnaps", "[]")).let { a ->
-            for (i in 0 until a.length()) a.getJSONObject(i).let { csnaps.add(CSnap(it.getString("i"), it.getLong("s"), it.getLong("e"), it.getDouble("y"), it.getDouble("c"), it.getDouble("x"))) }
+            for (i in 0 until a.length()) a.getJSONObject(i).let { csnaps.add(CSnap(it.getString("i"), it.getLong("s"), it.getLong("e"), it.getDouble("y"), it.getDouble("c"), it.getDouble("x"), it.optDouble("n", 0.0))) }
         }
         val cy = s.getString("cyc", "") ?: ""
         cycle.value = if (cy.isBlank()) null else JSONObject(cy).let { Cycle(it.getLong("s"), it.getDouble("y"), it.optLong("x", 0L)) }
@@ -104,7 +109,7 @@ object Store {
 
     private fun save() {
         val c = JSONArray().also { a -> cats.forEach { a.put(JSONObject().put("n", it.name).put("k", it.keywords).put("b", it.budget).put("p", it.period).put("d", it.startDay).put("s", it.periodStart)) } }
-        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income)) } }
+        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income).put("k", it.counted)) } }
         val h = JSONArray().also { a -> snaps.forEach { a.put(JSONObject().put("i", it.id).put("c", it.category).put("s", it.start).put("e", it.end).put("b", it.budget).put("a", it.spent)) } }
         sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString()).apply()
     }
@@ -160,18 +165,23 @@ object Store {
 
     private fun saveC() {
         val t = JSONArray().also { a -> tpls.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due)) } }
-        val m = JSONArray().also { a -> items.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due).put("p", it.paid)) } }
-        val h = JSONArray().also { a -> csnaps.forEach { a.put(JSONObject().put("i", it.id).put("s", it.start).put("e", it.end).put("y", it.salary).put("c", it.committed).put("x", it.spent)) } }
+        val m = JSONArray().also { a -> items.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due).put("p", it.paid).put("t", it.txnId)) } }
+        val h = JSONArray().also { a -> csnaps.forEach { a.put(JSONObject().put("i", it.id).put("s", it.start).put("e", it.end).put("y", it.salary).put("c", it.committed).put("x", it.spent).put("n", it.income)) } }
         val c = cycle.value?.let { JSONObject().put("s", it.start).put("y", it.salary).put("x", it.next).toString() } ?: ""
         sp().edit().putString("tpl", t.toString()).putString("items", m.toString()).putString("csnaps", h.toString()).putString("cyc", c).apply()
     }
     fun cycleSpent(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && it.time >= c.start }.sumOf { it.amount } }
     fun unpaid(): Double = items.filter { !it.paid }.sumOf { it.amount }
-    fun cycleLeft(): Double = (cycle.value?.salary ?: 0.0) - unpaid() - cycleSpent()
+    fun cycleIncome(): Double { val c = cycle.value ?: return 0.0; return txns.filter { it.income && it.counted && it.time >= c.start }.sumOf { it.amount } }
+    fun paidManual(): Double = items.filter { it.paid && it.txnId.isEmpty() }.sumOf { it.amount }
+    fun spentAll(): Double = cycleSpent() + paidManual()
+    fun cashLeft(): Double = (cycle.value?.salary ?: 0.0) + cycleIncome() - spentAll()
+    fun cycleLeft(): Double = cashLeft() - unpaid()
     fun startCycle(salary: Double, start: Long, next: Long, chosen: List<Tpl>) {
         val old = cycle.value
         if (old != null) csnaps.add(0, CSnap("c:${old.start}", old.start, start, old.salary, unpaid(),
-            txns.filter { !it.income && it.time >= old.start && it.time < start }.sumOf { it.amount }))
+            txns.filter { !it.income && it.time >= old.start && it.time < start }.sumOf { it.amount } + paidManual(),
+            txns.filter { it.income && it.counted && it.time >= old.start && it.time < start }.sumOf { it.amount }))
         for (i in cats.indices) {
             val c = cats[i]
             if (c.period != "CYCLE") continue
@@ -186,7 +196,7 @@ object Store {
         save(); saveC()
     }
     fun editCycle(salary: Double, next: Long) { cycle.value = cycle.value?.copy(salary = salary, next = next); saveC() }
-    fun togglePaid(i: Item) { val k = items.indexOf(i); if (k >= 0) { items[k] = i.copy(paid = !i.paid); saveC() } }
+    fun togglePaid(i: Item) { val k = items.indexOf(i); if (k >= 0) { items[k] = i.copy(paid = !i.paid, txnId = ""); saveC() } }
     fun saveItem(old: Item?, n: Item, toList: Boolean) {
         if (old == null) items.add(n) else { val k = items.indexOf(old); if (k >= 0) items[k] = n }
         val t = Tpl(n.id, n.name, n.amount, n.due)
@@ -208,7 +218,13 @@ object Store {
         save()
     }
     fun delCat(c: Category) { cats.remove(c); save() }
-    fun delTxn(t: Txn) { txns.remove(t); save() }
+    fun delTxn(t: Txn) {
+        txns.remove(t)
+        val k = items.indexOfFirst { it.txnId == t.id }
+        if (k >= 0) { items[k] = items[k].copy(paid = false, txnId = ""); saveC() }
+        if (t.id == lastPing) cancelPing()
+        save()
+    }
     fun setCat(t: Txn, cat: String) { val i = txns.indexOf(t); if (i >= 0) { txns[i] = t.copy(category = cat); save() } }
     private const val WALLET = "com.google.android.apps.walletnfcrel"
     fun addTxn(t: Txn): Txn? {
@@ -224,7 +240,7 @@ object Store {
             return null
         }
         txns.add(0, t); save()
-        if (!t.income) alert(t.category)
+        if (!t.income) { autoPay(t); alert(t.category) }
         return t
     }
     fun updateTxn(old: Txn, n: Txn) {
@@ -232,6 +248,7 @@ object Store {
         txns[i] = n
         if (old.category == "Uncategorized" && n.category != "Uncategorized" && !n.income) learn(n.category, n.merchant)
         save()
+        if (old.id == lastPing) cancelPing()
         if (!n.income) alert(n.category)
     }
     private fun learn(cat: String, m: String) {
@@ -265,6 +282,11 @@ object Store {
         val msg = if (lvl == 100) "%s is over budget: RM %.2f of RM %.2f".format(c.name, sp, c.budget) else "%s has used %d%% of its budget".format(c.name, (pct * 100).toInt())
         nm.notify(("b" + c.name).hashCode(), Notification.Builder(ctx, "budget").setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle("Budget alert").setContentText(msg).setContentIntent(pi).setAutoCancel(true).build())
+    }
+    private fun autoPay(t: Txn) {
+        val m = t.merchant.lowercase()
+        val k = items.indexOfFirst { !it.paid && Math.abs(it.amount - t.amount) < 0.005 && (m.contains(it.name.lowercase()) || it.name.lowercase().contains(m)) }
+        if (k >= 0) { items[k] = items[k].copy(paid = true, txnId = t.id); saveC() }
     }
     private fun reclassify() {
         for (j in txns.indices) if (txns[j].category == "Uncategorized") {

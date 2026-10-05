@@ -37,11 +37,12 @@ class PayListener : NotificationListenerService() {
         nm.createNotificationChannel(NotificationChannel("rec", "Recorded payments", NotificationManager.IMPORTANCE_DEFAULT))
         val i = Intent(this, MainActivity::class.java).putExtra("txn", t.id)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val pi = PendingIntent.getActivity(this, t.id.hashCode(), i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val pi = PendingIntent.getActivity(this, 1001, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val n = Notification.Builder(this, "rec").setSmallIcon(android.R.drawable.ic_menu_agenda)
             .setContentTitle("RM %.2f • %s".format(t.amount, t.merchant))
             .setContentText("${t.category} — tap to change")
             .setContentIntent(pi).setAutoCancel(true).build()
-        nm.notify(t.id.hashCode(), n)
+        Store.lastPing = t.id
+        nm.notify(1001, n)
     }
 }
