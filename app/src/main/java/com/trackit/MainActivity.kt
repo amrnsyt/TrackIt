@@ -140,7 +140,7 @@ fun BottomBar(page: Int, go: (Int) -> Unit, onAdd: () -> Unit) {
             FloatingActionButton(onClick = onAdd, modifier = Modifier.size(58.dp), shape = CircleShape,
                 containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) { Icon(Icons.Filled.Add, "Add payment") }
             NavItem(Icons.Filled.Savings, "Salary", page == 2) { go(2) }
-            NavItem(Icons.Filled.History, "History", page == 3) { go(3) }
+            NavItem(Icons.Filled.CreditCard, "Debt", page == 3) { go(3) }
         }
     }
 }
@@ -150,7 +150,7 @@ fun App() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
-    val pager = rememberPagerState { 4 }
+    val pager = rememberPagerState { 5 }
     var enabled by remember { mutableStateOf(listenerOn(ctx)) }
     var menu by remember { mutableStateOf(false) }
     var addT by remember { mutableStateOf(false) }
@@ -185,7 +185,7 @@ fun App() {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Crossfade(pager.currentPage, label = "title") { p ->
-                        Text(when (p) { 0 -> greeting(); 1 -> "Budgets"; 2 -> "Commitment"; else -> "History" }, style = MaterialTheme.typography.headlineLarge)
+                        Text(when (p) { 0 -> greeting(); 1 -> "Budgets"; 2 -> "Commitment"; 3 -> "Debt"; else -> "History" }, style = MaterialTheme.typography.headlineLarge)
                     }
                     Text(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -194,6 +194,7 @@ fun App() {
                         Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.MoreHoriz, "More options") }
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("History") }, leadingIcon = { Icon(Icons.Filled.History, null) }, onClick = { menu = false; go(4) })
                         DropdownMenuItem(text = { Text("Backup data") }, leadingIcon = { Icon(Icons.Filled.Upload, null) }, onClick = { menu = false; bk.launch("TrackIt-backup.json") })
                         DropdownMenuItem(text = { Text("Restore data") }, leadingIcon = { Icon(Icons.Filled.Download, null) }, onClick = { menu = false; rs.launch(arrayOf("*/*")) })
                         HorizontalDivider()
@@ -239,6 +240,7 @@ fun App() {
                         0 -> Activity(del, { go(1) })
                         1 -> Budgets({ editing = it; catSheet = true }, { editing = null; catSheet = true })
                         2 -> Commitment()
+                        3 -> DebtScreen()
                         else -> History()
                     }
                 }
@@ -408,6 +410,8 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
                                 color = if (v > c.budget) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary)
                         }
                     } else Text("${rm(v)} spent · no budget set", style = MaterialTheme.typography.bodyMedium)
+                    val lk = Store.items.filter { it.catName == c.name }
+                    if (lk.isNotEmpty()) Text("Commitments: " + lk.joinToString { it.name + if (it.paid) " ✓" else "" }, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                     if (c.keywords.isNotBlank()) Text(c.keywords, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -700,7 +704,7 @@ fun Commitment() {
                     Checkbox(i.paid, { Store.togglePaid(i) })
                     Column(Modifier.weight(1f)) {
                         Text(i.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(if (i.paid) "Paid" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid", style = MaterialTheme.typography.bodySmall,
+                        Text((if (i.paid) "Paid" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid") + (if (i.catName.isNotBlank()) " · ${i.catName}" else "") + (Store.debts.firstOrNull { it.id == i.debtId }?.let { " · Debt: ${it.name}" } ?: ""), style = MaterialTheme.typography.bodySmall,
                             color = if (i.paid) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(rm(i.amount), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 10.dp))
@@ -770,21 +774,108 @@ fun ItemSheet(old: Item?, close: () -> Unit) {
     var a by remember { mutableStateOf(old?.amount?.let { "%.2f".format(it) } ?: "") }
     var d by remember { mutableStateOf(old?.due?.takeIf { it > 0 }?.toString() ?: "") }
     var keep by remember { mutableStateOf(true) }
+    var cat by remember { mutableStateOf(old?.catName ?: "") }
+    var debt by remember { mutableStateOf(old?.debtId ?: "") }
     val v = a.replace(",", ".").toDoubleOrNull()
     Sheet(if (old == null) "Add commitment" else "Edit commitment", close) {
         Field(n, { n = it }, "Name")
         Field(a, { a = it }, "Amount RM", KeyboardType.Decimal)
         Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Due day of month (optional)", KeyboardType.Number)
+        SectionLabel("Linked category")
+        Chips(listOf("" to "None") + Store.cats.map { it.name to it.name }, cat) { cat = it }
+        if (Store.debts.isNotEmpty()) {
+            SectionLabel("Linked debt (balance drops when paid)")
+            Chips(listOf("" to "None") + Store.debts.map { it.id to it.name }, debt) { debt = it }
+        }
         if (old == null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Save to my list for future cycles", Modifier.weight(1f)); Switch(keep, { keep = it })
         }
         PrimaryButton("Save", n.isNotBlank() && v != null && v > 0) {
-            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false, old?.txnId ?: ""), keep)
+            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false, old?.txnId ?: "", cat, debt), keep)
             close()
         }
         if (old != null) {
             TextButton({ Store.delItem(old, false); close() }, Modifier.fillMaxWidth()) { Text("Remove from this cycle", color = MaterialTheme.colorScheme.error) }
             if (Store.tpls.any { it.id == old.id }) TextButton({ Store.delItem(old, true); close() }, Modifier.fillMaxWidth()) { Text("Remove from my list too", color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable
+fun DebtScreen() {
+    var sheet by remember { mutableStateOf<Debt?>(null) }
+    var adding by remember { mutableStateOf(false) }
+    val total = Store.debts.sumOf { it.balance }
+    val orig = Store.debts.sumOf { it.total }
+    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+        item {
+            Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Total debt remaining", style = MaterialTheme.typography.labelLarge)
+                    Text(mk(rm(total)), style = MaterialTheme.typography.displayMedium)
+                    if (orig > 0) {
+                        BudgetBar(orig - total, orig, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
+                        Text("${((orig - total) / orig * 100).toInt()}% paid off of ${mk(rm(orig))}", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+        if (Store.debts.isEmpty()) item { EmptyState(Icons.Filled.CreditCard, "No debts", "Add loans or cards, then link a commitment so the balance drops when you pay it.") }
+        items(Store.debts.toList(), key = { it.id }) { d ->
+            Card(modifier = Modifier.fillMaxWidth().animateItem(), shape = MaterialTheme.shapes.large, onClick = { sheet = d },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        CatAvatar(d.name)
+                        Column(Modifier.weight(1f)) {
+                            Text(d.name, style = MaterialTheme.typography.titleMedium)
+                            Text((if (d.monthly > 0) "${rm(d.monthly)}/month" else "No monthly set") + (if (d.due > 0) " · due day ${d.due}" else ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    BudgetBar(d.total - d.balance, d.total, color = MaterialTheme.colorScheme.tertiary)
+                    Text("${mk(rm(d.balance))} left of ${mk(rm(d.total))}", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        item { PrimaryButton("Add a debt") { adding = true } }
+    }
+    if (adding) DebtSheet(null) { adding = false }
+    sheet?.let { DebtSheet(it) { sheet = null } }
+}
+
+@Composable
+fun DebtSheet(old: Debt?, close: () -> Unit) {
+    var n by remember { mutableStateOf(old?.name ?: "") }
+    var t by remember { mutableStateOf(old?.total?.let { "%.2f".format(it) } ?: "") }
+    var b by remember { mutableStateOf(old?.balance?.let { "%.2f".format(it) } ?: "") }
+    var mo by remember { mutableStateOf(old?.monthly?.takeIf { it > 0 }?.let { "%.2f".format(it) } ?: "") }
+    var d by remember { mutableStateOf(old?.due?.takeIf { it > 0 }?.toString() ?: "") }
+    val tv = t.replace(",", ".").toDoubleOrNull()
+    val bv = if (b.isBlank()) tv else b.replace(",", ".").toDoubleOrNull()
+    Sheet(if (old == null) "Add debt" else "Edit debt", close) {
+        Field(n, { n = it }, "Name")
+        Field(t, { t = it }, "Total debt RM", KeyboardType.Decimal)
+        Field(b, { b = it }, "Current balance RM (blank = total)", KeyboardType.Decimal)
+        Field(mo, { mo = it }, "Monthly payment RM (optional)", KeyboardType.Decimal)
+        Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Due day of month (optional)", KeyboardType.Number)
+        PrimaryButton("Save", n.isNotBlank() && tv != null && tv > 0 && bv != null) {
+            Store.saveDebt(old, Debt(old?.id ?: "d${System.nanoTime()}", n.trim(), tv!!, bv!!, mo.replace(",", ".").toDoubleOrNull() ?: 0.0, d.toIntOrNull()?.coerceIn(0, 31) ?: 0))
+            close()
+        }
+        if (old != null) {
+            val linked = Store.items.filter { it.debtId == old.id }
+            if (linked.isNotEmpty()) {
+                SectionLabel("Linked commitments")
+                linked.forEach { Text("${it.name} · ${rm(it.amount)}" + if (it.paid) " · paid" else "") }
+            }
+            val logs = Store.dlogs.filter { it.debtId == old.id }.take(8)
+            if (logs.isNotEmpty()) {
+                SectionLabel("Payment history")
+                logs.forEach { Text("${fmtDate(it.time)} · −${rm(it.amount)}") }
+            }
+            TextButton({ Store.delDebt(old); close() }, Modifier.fillMaxWidth()) { Text("Delete debt", color = MaterialTheme.colorScheme.error) }
         }
     }
 }
