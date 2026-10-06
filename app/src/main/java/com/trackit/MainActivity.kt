@@ -41,6 +41,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.delay
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -177,6 +183,9 @@ fun App() {
         val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) { enabled = listenerOn(ctx); Store.rollover() } }
         owner.lifecycle.addObserver(o); onDispose { owner.lifecycle.removeObserver(o) }
     }
+    val haptic = LocalHapticFeedback.current
+    var firstTab by remember { mutableStateOf(true) }
+    LaunchedEffect(pager.settledPage) { if (firstTab) firstTab = false else haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
     val go: (Int) -> Unit = { i -> scope.launch { pager.animateScrollToPage(i) } }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -233,7 +242,7 @@ fun App() {
                     }
                 }
             }
-            HorizontalPager(pager, Modifier.weight(1f), beyondViewportPageCount = 1) { page ->
+            HorizontalPager(pager, Modifier.weight(1f), beyondViewportPageCount = 1, flingBehavior = PagerDefaults.flingBehavior(state = pager, snapPositionalThreshold = 0.3f)) { page ->
                 Box(Modifier.graphicsLayer {
                     val off = ((pager.currentPage - page) + pager.currentPageOffsetFraction).absoluteValue.coerceIn(0f, 1f)
                     alpha = 1f - off * 0.5f; scaleX = 1f - off * 0.05f; scaleY = 1f - off * 0.05f
@@ -303,21 +312,24 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
             }
         }
         item {
-            Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge,
+            Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)) {
-                Column(Modifier.padding(24.dp).animateContentSize()) {
-                    Text(if (cyc != null) "Spent this cycle" else "Spent this period", style = MaterialTheme.typography.labelLarge)
-                    Text(rm(shown.toDouble()), style = MaterialTheme.typography.displayMedium)
-                    if (cyc != null) Text(if (Store.hideBal.value) "Balance hidden" else if (dl != null && cleft > 0) "${rm(cleft)} left · ${rm(cleft / dl)}/day for $dl days" else "${rm(cleft)} left this cycle", style = MaterialTheme.typography.titleSmall)
-                    if (bTotal > 0) {
-                        Spacer(Modifier.height(12.dp))
-                        BudgetBar(bSpent, bTotal, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
-                        Text("${statusText(bSpent, bTotal)} of ${rm(bTotal)} budget", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium)
+                Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp).animateContentSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                        Column {
+                            Text(if (cyc != null) "Spent this cycle" else "Spent this period", style = MaterialTheme.typography.labelMedium)
+                            Text(rm(shown.toDouble()), style = MaterialTheme.typography.headlineLarge.copy(fontSize = 30.sp), maxLines = 1)
+                        }
+                        if (cyc != null) Column(horizontalAlignment = Alignment.End) {
+                            Text("Safe to spend", style = MaterialTheme.typography.labelSmall)
+                            Text(if (Store.hideBal.value) "RM ••••" else if (dl != null && cleft > 0) "${rm(cleft / dl)}/day" else rm(cleft), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        }
                     }
-                    Spacer(Modifier.height(14.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (bTotal > 0) BudgetBar(bSpent, bTotal, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Pill("${base.size} payments", Color.White.copy(alpha = 0.55f), MaterialTheme.colorScheme.onPrimaryContainer)
                         if (needs > 0) Pill("$needs need a category", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                        if (bTotal > 0) Text(statusText(bSpent, bTotal) + " budget", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -353,7 +365,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
         groups.forEach { (day, list) ->
             if (sel == null) item(key = "h$day") { SectionLabel(day) }
             items(list, key = { it.id }) { t ->
-                Box(Modifier.animateItem().clip(MaterialTheme.shapes.large)) { TxnRow(t) { pick = t } }
+                Box(Modifier.enter(list.indexOf(t)).animateItem().clip(MaterialTheme.shapes.large)) { TxnRow(t) { pick = t } }
             }
         }
     }
@@ -377,15 +389,10 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
             Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(20.dp)) {
                     Text("Spending by category", style = MaterialTheme.typography.titleMedium)
-                    Text("Bars show budget used, or share of spending when no budget is set.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Share of spending in each category this period.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(16.dp))
-                    if (top.isEmpty()) Text("Add payments to see your chart.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        top.forEach { (c, v) ->
-                            val frac = if (c.budget > 0) (v / c.budget).toFloat() else if (total > 0) (v / total).toFloat() else 0f
-                            PillBar(c.name, frac, catColor(c.name), "${(frac * 100).toInt()}%")
-                        }
-                    }
+                    if (total <= 0) Text("Add payments to see your chart.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else SpendDonut(rows.map { it.first.name to it.second }.filter { it.second > 0 }, total)
                 }
             }
         }
@@ -393,7 +400,7 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
         if (Store.cats.isEmpty()) item { EmptyState(Icons.Filled.PieChart, "No categories", "Create a category to group payments and set a budget.") }
         items(Store.cats.toList(), key = { it.name }) { c ->
             val v = Store.spent(c)
-            Card(modifier = Modifier.fillMaxWidth().animateItem(), shape = MaterialTheme.shapes.large, onClick = { onEdit(c) },
+            Card(modifier = Modifier.fillMaxWidth().enter(Store.cats.indexOf(c) + 2).animateItem(), shape = MaterialTheme.shapes.large, onClick = { onEdit(c) },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -656,7 +663,58 @@ fun LegendDot(color: Color, label: String) {
 
 @Composable
 fun Stat(label: String, value: String) {
-    Column { Text(label, style = MaterialTheme.typography.labelSmall); Text(value, fontWeight = FontWeight.Bold, maxLines = 1) }
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Text(value, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+@Composable
+fun Modifier.enter(i: Int): Modifier {
+    if (i > 8) return this
+    var go by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(i * 45L); go = true }
+    val a by animateFloatAsState(if (go) 1f else 0f, tween(380), label = "in")
+    return this.graphicsLayer { alpha = a; translationY = (1f - a) * 36f }
+}
+
+@Composable
+fun SpendDonut(data: List<Pair<String, Double>>, total: Double) {
+    val big = data.filter { it.second / total >= 0.03 }.sortedByDescending { it.second }
+    val rest = data.filter { it.second / total < 0.03 }.sumOf { it.second }
+    val slices = big.map { Triple(it.first, it.second, catColor(it.first)) } + (if (rest > 0) listOf(Triple("Others", rest, Color.Gray)) else emptyList())
+    var sel by remember { mutableStateOf(-1) }
+    var go by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { go = true }
+    val prog by animateFloatAsState(if (go) 1f else 0f, tween(900), label = "donut")
+    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.size(220.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize().padding(20.dp)) {
+                drawArc(track, 0f, 360f, false, style = Stroke(30.dp.toPx()))
+                var start = -90f
+                slices.forEachIndexed { i, (_, v, c) ->
+                    val sweep = (v / total * 360.0).toFloat() * prog
+                    drawArc(c, start, (sweep - 2f).coerceAtLeast(0.5f), false, alpha = if (sel == -1 || sel == i) 1f else 0.35f,
+                        style = Stroke(if (i == sel) 40.dp.toPx() else 30.dp.toPx()))
+                    start += sweep
+                }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(if (sel in slices.indices) slices[sel].first else "Total", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(rm(if (sel in slices.indices) slices[sel].second else total), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+        }
+        slices.forEachIndexed { i, (n, v, c) ->
+            Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable { sel = if (sel == i) -1 else i }.padding(vertical = 8.dp, horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(c))
+                Spacer(Modifier.width(10.dp))
+                Text(n, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (sel == i) FontWeight.Bold else FontWeight.Normal)
+                Text("${(v / total * 100).toInt()}%", Modifier.padding(end = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(rm(v), fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
 }
 
 @Composable
@@ -667,6 +725,8 @@ fun Commitment() {
     var addItem by remember { mutableStateOf(false) }
     val safe = Store.cycleLeft(); val bal = Store.cashLeft(); val inc = Store.cycleIncome()
     val spent = Store.spentAll(); val unpaid = Store.unpaid()
+    val balShown by animateFloatAsState(bal.toFloat(), tween(700), label = "bal")
+    val haptic = LocalHapticFeedback.current
     val now = System.currentTimeMillis()
     val dl = cyc?.takeIf { it.next > now }?.let { Math.ceil((it.next - now) / 86400000.0).toInt().coerceAtLeast(1) }
     val today = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
@@ -690,11 +750,8 @@ fun Commitment() {
                                 Text("Balance", style = MaterialTheme.typography.titleMedium)
                                 Text("Cycle since ${fmtDate(cyc.start)}", style = MaterialTheme.typography.labelSmall)
                             }
-                            IconButton({ Store.setHide(!Store.hideBal.value) }) {
-                                Icon(if (Store.hideBal.value) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (Store.hideBal.value) "Show amounts" else "Hide amounts")
-                            }
                         }
-                        Text(mk(rm(bal)), style = MaterialTheme.typography.displayMedium.copy(fontSize = 42.sp), maxLines = 1)
+                        Text(mk(rm(balShown.toDouble())), Modifier.clip(MaterialTheme.shapes.small).clickable { Store.setHide(!Store.hideBal.value) }, style = MaterialTheme.typography.displayMedium.copy(fontSize = 42.sp), maxLines = 1)
                         Pill(if (Store.hideBal.value) "Amounts hidden" else "Safe to spend ${rm(safe)} after unpaid",
                             if (safe < 0) MaterialTheme.colorScheme.errorContainer else Color.White.copy(alpha = 0.55f),
                             if (safe < 0) MaterialTheme.colorScheme.onErrorContainer else ink)
@@ -710,7 +767,7 @@ fun Commitment() {
                             LegendDot(ink, "Spent & paid"); LegendDot(ink.copy(alpha = 0.4f), "Unpaid"); LegendDot(Color.White.copy(alpha = 0.75f), "Safe")
                         }
                         Surface(color = Color.White.copy(alpha = 0.45f), shape = MaterialTheme.shapes.large) {
-                            Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
                                 Stat("Salary", mk(rm(cyc.salary))); Stat("Income", mk("+" + rm(inc))); Stat("Spent & paid", mk(rm(spent)))
                             }
                         }
@@ -718,9 +775,13 @@ fun Commitment() {
                             else if (dl != null && safe > 0) "About ${rm(safe / dl)} per day for $dl days until ${fmtDate(cyc.next)}"
                             else if (cyc.next > 0) "Next salary: ${fmtDate(cyc.next)}" else "Set the next salary date to see a daily limit",
                             style = MaterialTheme.typography.labelLarge)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Button({ sheet = "new" }, colors = dark) { Text("Start new cycle") }
                             TextButton({ sheet = "edit" }) { Text("Edit salary", color = ink) }
+                            Spacer(Modifier.weight(1f))
+                            IconButton({ Store.setHide(!Store.hideBal.value) }) {
+                                Icon(if (Store.hideBal.value) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (Store.hideBal.value) "Show amounts" else "Hide amounts")
+                            }
                         }
                     }
                 }
@@ -749,10 +810,10 @@ fun Commitment() {
         if (Store.items.isEmpty()) item { EmptyState(Icons.Filled.Event, "No commitments", "Add rent, loans or bills you need to pay this cycle. Saved ones can be picked again next cycle.") }
         items(sorted, key = { it.id }) { i ->
             val soon = !i.paid && i.due > 0 && (i.due - today) in 0..3
-            Card(modifier = Modifier.fillMaxWidth().alpha(if (i.paid) 0.65f else 1f).animateItem(), shape = MaterialTheme.shapes.large, onClick = { editItem = i },
+            Card(modifier = Modifier.fillMaxWidth().alpha(if (i.paid) 0.65f else 1f).enter(sorted.indexOf(i) + 2).animateItem(), shape = MaterialTheme.shapes.large, onClick = { editItem = i },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Row(Modifier.padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(i.paid, { Store.togglePaid(i) })
+                    Checkbox(i.paid, { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); Store.togglePaid(i) })
                     Column(Modifier.weight(1f)) {
                         Text(i.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text((if (i.paid) "Paid" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid") + (if (i.catName.isNotBlank()) " · ${i.catName}" else "") +
@@ -878,7 +939,7 @@ fun DebtScreen() {
         }
         if (Store.debts.isEmpty()) item { EmptyState(Icons.Filled.CreditCard, "No debts", "Add loans or cards, then link a commitment so the balance drops when you pay it.") }
         items(Store.debts.toList(), key = { it.id }) { d ->
-            Card(modifier = Modifier.fillMaxWidth().animateItem(), shape = MaterialTheme.shapes.large, onClick = { sheet = d },
+            Card(modifier = Modifier.fillMaxWidth().enter(Store.debts.indexOf(d) + 1).animateItem(), shape = MaterialTheme.shapes.large, onClick = { sheet = d },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
