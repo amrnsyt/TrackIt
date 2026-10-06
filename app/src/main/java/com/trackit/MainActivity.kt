@@ -41,6 +41,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.launch
@@ -644,70 +646,123 @@ fun CycleSnapCard(c: CSnap) {
 fun todayStart(): Long = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
 
 @Composable
+fun LegendDot(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(9.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(5.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+fun Stat(label: String, value: String) {
+    Column { Text(label, style = MaterialTheme.typography.labelSmall); Text(value, fontWeight = FontWeight.Bold, maxLines = 1) }
+}
+
+@Composable
 fun Commitment() {
     val cyc = Store.cycle.value
     var sheet by remember { mutableStateOf<String?>(null) }
     var editItem by remember { mutableStateOf<Item?>(null) }
     var addItem by remember { mutableStateOf(false) }
-    val left = Store.cycleLeft()
-    val bal = Store.cashLeft()
-    val inc = Store.cycleIncome()
-    val spent = Store.spentAll()
+    val safe = Store.cycleLeft(); val bal = Store.cashLeft(); val inc = Store.cycleIncome()
+    val spent = Store.spentAll(); val unpaid = Store.unpaid()
     val now = System.currentTimeMillis()
     val dl = cyc?.takeIf { it.next > now }?.let { Math.ceil((it.next - now) / 86400000.0).toInt().coerceAtLeast(1) }
-    val dark = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onPrimaryContainer, contentColor = MaterialTheme.colorScheme.primaryContainer)
+    val today = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+    val ink = MaterialTheme.colorScheme.onPrimaryContainer
+    val dark = ButtonDefaults.buttonColors(containerColor = ink, contentColor = MaterialTheme.colorScheme.primaryContainer)
+    val sorted = Store.items.sortedWith(compareBy({ it.paid }, { if (it.due == 0) 99 else it.due }))
+    val paidAmt = Store.items.filter { it.paid }.sumOf { it.amount }
+    val allAmt = Store.items.sumOf { it.amount }
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
         item {
             Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge,
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)) {
-                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = ink)) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (cyc == null) {
                         Text("Start your salary cycle", style = MaterialTheme.typography.headlineSmall)
-                        Text("Enter your salary and the date it arrived. Pick which commitments you need to pay this cycle.")
+                        Text("Enter your salary and the date it arrived, then pick the commitments you need to pay this cycle.")
                         Button({ sheet = "new" }, Modifier.fillMaxWidth().height(54.dp), colors = dark) { Text("Start first cycle", fontWeight = FontWeight.SemiBold) }
                     } else {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("Salary since ${fmtDate(cyc.start)}", style = MaterialTheme.typography.labelLarge)
+                            Column {
+                                Text("Balance", style = MaterialTheme.typography.titleMedium)
+                                Text("Cycle since ${fmtDate(cyc.start)}", style = MaterialTheme.typography.labelSmall)
+                            }
                             IconButton({ Store.setHide(!Store.hideBal.value) }) {
                                 Icon(if (Store.hideBal.value) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (Store.hideBal.value) "Show amounts" else "Hide amounts")
                             }
                         }
-                        Text(mk(rm(cyc.salary)), style = MaterialTheme.typography.displayMedium)
-                        if (inc > 0) Text("+ ${mk(rm(inc))} income counted", style = MaterialTheme.typography.labelLarge)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column { Text("Unpaid", style = MaterialTheme.typography.labelMedium); Text(mk(rm(Store.unpaid())), fontWeight = FontWeight.Bold) }
-                            Column { Text("Spent & paid", style = MaterialTheme.typography.labelMedium); Text(mk(rm(spent)), fontWeight = FontWeight.Bold) }
-                            Column { Text("Balance", style = MaterialTheme.typography.labelMedium); Text(mk(rm(bal)), fontWeight = FontWeight.Bold) }
+                        Text(mk(rm(bal)), style = MaterialTheme.typography.displayMedium.copy(fontSize = 42.sp), maxLines = 1)
+                        Pill(if (Store.hideBal.value) "Amounts hidden" else "Safe to spend ${rm(safe)} after unpaid",
+                            if (safe < 0) MaterialTheme.colorScheme.errorContainer else Color.White.copy(alpha = 0.55f),
+                            if (safe < 0) MaterialTheme.colorScheme.onErrorContainer else ink)
+                        val tot = (cyc.salary + inc).coerceAtLeast(1.0)
+                        val sp = (spent / tot).toFloat().coerceAtLeast(0f); val up = (unpaid / tot).toFloat().coerceAtLeast(0f); val sf = (safe / tot).toFloat().coerceAtLeast(0f)
+                        val sum = (sp + up + sf).coerceAtLeast(1f)
+                        Row(Modifier.fillMaxWidth().height(14.dp).clip(CircleShape)) {
+                            Box(Modifier.weight((sp / sum).coerceAtLeast(0.001f)).fillMaxHeight().background(ink))
+                            Box(Modifier.weight((up / sum).coerceAtLeast(0.001f)).fillMaxHeight().background(ink.copy(alpha = 0.4f)))
+                            Box(Modifier.weight((sf / sum).coerceAtLeast(0.001f)).fillMaxHeight().background(Color.White.copy(alpha = 0.75f)))
                         }
-                        BudgetBar(spent + Store.unpaid(), cyc.salary + inc, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
-                        Text(if (dl != null && left > 0) "Safe to spend ${mk(rm(left / dl))}/day for $dl days" else if (cyc.next > 0) "Next salary: ${fmtDate(cyc.next)}" else "Set the next salary date to see a daily limit",
-                            style = MaterialTheme.typography.titleSmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            LegendDot(ink, "Spent & paid"); LegendDot(ink.copy(alpha = 0.4f), "Unpaid"); LegendDot(Color.White.copy(alpha = 0.75f), "Safe")
+                        }
+                        Surface(color = Color.White.copy(alpha = 0.45f), shape = MaterialTheme.shapes.large) {
+                            Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Stat("Salary", mk(rm(cyc.salary))); Stat("Income", mk("+" + rm(inc))); Stat("Spent & paid", mk(rm(spent)))
+                            }
+                        }
+                        Text(if (Store.hideBal.value) "Next salary: " + (if (cyc.next > 0) fmtDate(cyc.next) else "not set")
+                            else if (dl != null && safe > 0) "About ${rm(safe / dl)} per day for $dl days until ${fmtDate(cyc.next)}"
+                            else if (cyc.next > 0) "Next salary: ${fmtDate(cyc.next)}" else "Set the next salary date to see a daily limit",
+                            style = MaterialTheme.typography.labelLarge)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Button({ sheet = "new" }, colors = dark) { Text("Start new cycle") }
-                            TextButton({ sheet = "edit" }) { Text("Edit salary", color = MaterialTheme.colorScheme.onPrimaryContainer) }
+                            TextButton({ sheet = "edit" }) { Text("Edit salary", color = ink) }
                         }
                     }
                 }
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                SectionLabel("Commitments this cycle")
-                TextButton({ addItem = true }) { Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add") }
+            Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text("Commitments", style = MaterialTheme.typography.titleMedium)
+                            Text("${Store.items.count { it.paid }} of ${Store.items.size} paid", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        FilledTonalButton({ addItem = true }) { Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add") }
+                    }
+                    if (allAmt > 0) {
+                        BudgetBar(paidAmt, allAmt, color = MaterialTheme.colorScheme.tertiary)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Paid ${rm(paidAmt)}", style = MaterialTheme.typography.bodyMedium)
+                            Text("Unpaid ${rm(unpaid)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
             }
         }
         if (Store.items.isEmpty()) item { EmptyState(Icons.Filled.Event, "No commitments", "Add rent, loans or bills you need to pay this cycle. Saved ones can be picked again next cycle.") }
-        items(Store.items.sortedBy { it.due }, key = { it.id }) { i ->
-            Card(modifier = Modifier.fillMaxWidth().animateItem(), shape = MaterialTheme.shapes.large, onClick = { editItem = i },
+        items(sorted, key = { it.id }) { i ->
+            val soon = !i.paid && i.due > 0 && (i.due - today) in 0..3
+            Card(modifier = Modifier.fillMaxWidth().alpha(if (i.paid) 0.65f else 1f).animateItem(), shape = MaterialTheme.shapes.large, onClick = { editItem = i },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Row(Modifier.padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(i.paid, { Store.togglePaid(i) })
                     Column(Modifier.weight(1f)) {
                         Text(i.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text((if (i.paid) "Paid" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid") + (if (i.catName.isNotBlank()) " · ${i.catName}" else "") + (Store.debts.firstOrNull { it.id == i.debtId }?.let { " · Debt: ${it.name}" } ?: ""), style = MaterialTheme.typography.bodySmall,
-                            color = if (i.paid) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text((if (i.paid) "Paid" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid") + (if (i.catName.isNotBlank()) " · ${i.catName}" else "") +
+                            (Store.debts.firstOrNull { it.id == i.debtId }?.let { " · Debt: ${it.name}" } ?: ""),
+                            style = MaterialTheme.typography.bodySmall, color = if (i.paid) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text(rm(i.amount), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 10.dp))
+                    Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(rm(i.amount), style = MaterialTheme.typography.titleMedium)
+                        if (soon) Pill("Due soon", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                    }
                 }
             }
         }
