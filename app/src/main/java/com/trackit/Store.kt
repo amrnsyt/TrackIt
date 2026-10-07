@@ -210,7 +210,15 @@ object Store {
     }
     fun editCycle(salary: Double, next: Long) { cycle.value = cycle.value?.copy(salary = salary, next = next); saveC() }
     fun togglePaid(i: Item) { val k = items.indexOf(i); if (k >= 0) { items[k] = i.copy(paid = !i.paid, txnId = ""); payDebt(i, !i.paid); saveC() } }
-    fun saveDebt(old: Debt?, n: Debt) { if (old == null) debts.add(n) else { val k = debts.indexOf(old); if (k >= 0) debts[k] = n }; saveC() }
+    fun saveDebt(old: Debt?, n: Debt) {
+        if (old == null) debts.add(n) else { val k = debts.indexOf(old); if (k >= 0) debts[k] = n }
+        if (n.balance <= 0.005) tpls.removeAll { it.debtId == n.id }
+        else if (n.months > 0) {
+            for (k in tpls.indices) if (tpls[k].id == n.id) tpls[k] = tpls[k].copy(amount = n.monthly)
+            for (k in items.indices) if (items[k].id == n.id && !items[k].paid) items[k] = items[k].copy(amount = n.monthly)
+        }
+        saveC()
+    }
     fun delDebt(d: Debt) {
         debts.remove(d); dlogs.removeAll { it.debtId == d.id }
         for (k in items.indices) if (items[k].debtId == d.id) items[k] = items[k].copy(debtId = "")
@@ -233,17 +241,20 @@ object Store {
         debts.removeAll { it.id == id }; dlogs.removeAll { it.debtId == id }; tpls.removeAll { it.id == id }; items.removeAll { it.id == id && !it.paid }
         saveC()
     }
-    fun setLater(t: Txn, on: Boolean, months: Int, fee: Double) {
+    fun setLater(t: Txn, on: Boolean, months: Int, fee: Double, paid: Int = 0) {
         val i = txns.indexOfFirst { it.id == t.id }; if (i < 0) return
         val cur = txns[i]
         if (cur.planId.isNotBlank()) clearPlan(cur.planId)
         if (!on) { txns[i] = cur.copy(later = false, planId = ""); save(); return }
         val total = cur.amount * (1 + fee / 100.0 * months)
         val monthly = total / months
-        val d = Debt(("pl" + cur.id.hashCode()), "SPayLater · ${cur.merchant}".take(40), total, total, monthly, 31, dueEnd(cur.time), months)
+        val bal = (total - paid.coerceIn(0, months) * monthly).coerceAtLeast(0.0)
+        val d = Debt(("pl" + cur.id.hashCode()), "SPayLater · ${cur.merchant}".take(40), total, bal, monthly, 31, dueEnd(cur.time), months)
         debts.add(d)
-        tpls.add(Tpl(d.id, d.name, monthly, 31, cur.category, d.id))
-        if (cycle.value != null) items.add(Item(d.id, d.name, monthly, 31, false, "", cur.category, d.id))
+        if (bal > 0.005) {
+            tpls.add(Tpl(d.id, d.name, monthly, 31, cur.category, d.id))
+            if (cycle.value != null) items.add(Item(d.id, d.name, monthly, 31, false, "", cur.category, d.id))
+        }
         txns[i] = cur.copy(later = true, planId = d.id)
         save(); saveC()
     }

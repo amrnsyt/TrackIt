@@ -472,6 +472,7 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
     var later by remember(t.id) { mutableStateOf(t.later) }
     var months by remember(t.id) { mutableStateOf("1") }
     var fee by remember(t.id) { mutableStateOf("") }
+    var paidN by remember(t.id) { mutableStateOf("0") }
     val v = amt.replace(",", ".").toDoubleOrNull()
     Sheet("Edit payment", close) {
         Field(amt, { amt = it }, "Amount RM", KeyboardType.Decimal, if (v == null || v <= 0) "Enter a valid amount" else null)
@@ -488,12 +489,12 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
             SectionLabel("Category")
             Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
         }
-        if (!inc) LaterOptions(later, { later = it }, months, { months = it }, fee, { fee = it }, later && !t.later)
+        if (!inc) LaterOptions(later, { later = it }, months, { months = it }, fee, { fee = it }, paidN, { paidN = it }, later && !t.later)
         if (later && t.later) Text("The SPayLater plan is managed in the Debt tab. Turn the switch off to remove it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         PrimaryButton("Save changes", v != null && v > 0) {
             val u = t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc, counted = cnt)
             Store.updateTxn(t, u)
-            if (!inc && later != t.later) Store.setLater(u, later, months.toIntOrNull() ?: 1, fee.replace(",", ".").toDoubleOrNull() ?: 0.0)
+            if (!inc && later != t.later) Store.setLater(u, later, months.toIntOrNull() ?: 1, fee.replace(",", ".").toDoubleOrNull() ?: 0.0, paidN.toIntOrNull() ?: 0)
             close()
         }
         TextButton({ close(); onDelete(t) }, Modifier.fillMaxWidth()) { Text("Delete payment", color = MaterialTheme.colorScheme.error) }
@@ -511,6 +512,7 @@ fun AddTxnSheet(close: () -> Unit) {
     var later by remember { mutableStateOf(false) }
     var months by remember { mutableStateOf("1") }
     var fee by remember { mutableStateOf("") }
+    var paidN by remember { mutableStateOf("0") }
     val v = amt.replace(",", ".").toDoubleOrNull()
     Sheet("Add payment", close) {
         Field(amt, { amt = it }, "Amount RM", KeyboardType.Decimal)
@@ -518,11 +520,11 @@ fun AddTxnSheet(close: () -> Unit) {
         SectionLabel("Category")
         Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
         OutlinedButton({ pickDate = true }, Modifier.fillMaxWidth().height(52.dp)) { Icon(Icons.Filled.Event, null); Spacer(Modifier.width(8.dp)); Text(fmtDate(time)) }
-        LaterOptions(later, { later = it }, months, { months = it }, fee, { fee = it }, later)
+        LaterOptions(later, { later = it }, months, { months = it }, fee, { fee = it }, paidN, { paidN = it }, later)
         PrimaryButton("Save payment", v != null && v > 0) {
             val tx = Txn("manual:${System.nanoTime()}", v!!, note.trim().ifBlank { "Manual" }, cat, time)
             Store.addManual(tx)
-            if (later) Store.setLater(tx, true, months.toIntOrNull() ?: 1, fee.replace(",", ".").toDoubleOrNull() ?: 0.0)
+            if (later) Store.setLater(tx, true, months.toIntOrNull() ?: 1, fee.replace(",", ".").toDoubleOrNull() ?: 0.0, paidN.toIntOrNull() ?: 0)
             close()
         }
     }
@@ -990,16 +992,21 @@ fun DebtSheet(old: Debt?, close: () -> Unit) {
     var b by remember { mutableStateOf(old?.balance?.let { "%.2f".format(it) } ?: "") }
     var mo by remember { mutableStateOf(old?.monthly?.takeIf { it > 0 }?.let { "%.2f".format(it) } ?: "") }
     var d by remember { mutableStateOf(old?.due?.takeIf { it > 0 }?.toString() ?: "") }
+    val isPlan = old != null && old.months > 0
+    var pc by remember { mutableStateOf(if (isPlan && old!!.monthly > 0) ((old.total - old.balance) / old.monthly + 0.0001).toInt().toString() else "0") }
     val tv = t.replace(",", ".").toDoubleOrNull()
+    val mv = mo.replace(",", ".").toDoubleOrNull() ?: 0.0
     val bv = if (b.isBlank()) tv else b.replace(",", ".").toDoubleOrNull()
+    val bv2 = if (isPlan) tv?.let { (it - (pc.toIntOrNull() ?: 0) * mv).coerceAtLeast(0.0) } else bv
     Sheet(if (old == null) "Add debt" else "Edit debt", close) {
         Field(n, { n = it }, "Name")
         Field(t, { t = it }, "Total debt RM", KeyboardType.Decimal)
-        Field(b, { b = it }, "Current balance RM (blank = total)", KeyboardType.Decimal)
+        if (isPlan) Field(pc, { pc = it.filter { c -> c.isDigit() }.take(2) }, "Instalments paid (of ${old?.months})", KeyboardType.Number)
+        else Field(b, { b = it }, "Current balance RM (blank = total)", KeyboardType.Decimal)
         Field(mo, { mo = it }, "Monthly payment RM (optional)", KeyboardType.Decimal)
         Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Due day of month (optional)", KeyboardType.Number)
-        PrimaryButton("Save", n.isNotBlank() && tv != null && tv > 0 && bv != null) {
-            Store.saveDebt(old, Debt(old?.id ?: "d${System.nanoTime()}", n.trim(), tv!!, bv!!, mo.replace(",", ".").toDoubleOrNull() ?: 0.0, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.firstDue ?: 0L, old?.months ?: 0))
+        PrimaryButton("Save", n.isNotBlank() && tv != null && tv > 0 && bv2 != null) {
+            Store.saveDebt(old, Debt(old?.id ?: "d${System.nanoTime()}", n.trim(), tv!!, bv2!!, mo.replace(",", ".").toDoubleOrNull() ?: 0.0, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.firstDue ?: 0L, old?.months ?: 0))
             close()
         }
         if (old != null) {
@@ -1019,7 +1026,7 @@ fun DebtSheet(old: Debt?, close: () -> Unit) {
 }
 
 @Composable
-fun LaterOptions(on: Boolean, onOn: (Boolean) -> Unit, months: String, onMonths: (String) -> Unit, fee: String, onFee: (String) -> Unit, showPlan: Boolean) {
+fun LaterOptions(on: Boolean, onOn: (Boolean) -> Unit, months: String, onMonths: (String) -> Unit, fee: String, onFee: (String) -> Unit, paid: String, onPaid: (String) -> Unit, showPlan: Boolean) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("Paid with SPayLater")
@@ -1031,5 +1038,6 @@ fun LaterOptions(on: Boolean, onOn: (Boolean) -> Unit, months: String, onMonths:
         SectionLabel("Payment plan (due end of this month if bought by the 20th, otherwise end of next month)")
         Chips(listOf("1" to "Next month", "3" to "3 months", "6" to "6 months", "12" to "12 months"), months, onMonths)
         Field(fee, onFee, "Fee % per month (optional)", KeyboardType.Decimal)
+        Field(paid, { onPaid(it.filter { c -> c.isDigit() }.take(2)) }, "Instalments already paid (0 if new)", KeyboardType.Number)
     }
 }
