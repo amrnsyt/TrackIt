@@ -284,11 +284,14 @@ object Store {
         val parts = ps.filter { nextDue(it) == due }.map { it to amountDue(it) }
         return Bill(due, parts.sumOf { it.second }, parts)
     }
-    private fun billReserve(): Double {
-        val b = bill() ?: return 0.0
-        val nx = cycle.value?.next ?: 0L
-        return if (nx == 0L || b.month <= nx) b.total else 0.0
+    private fun reserveLimit(): Long {
+        val c = Calendar.getInstance()
+        c.set(Calendar.DAY_OF_MONTH, 1); c.add(Calendar.MONTH, 1)
+        c.set(Calendar.HOUR_OF_DAY, 0); c.set(Calendar.MINUTE, 0); c.set(Calendar.SECOND, 0); c.set(Calendar.MILLISECOND, 0)
+        return c.timeInMillis
     }
+    fun billReserved(b: Bill): Boolean = b.month <= reserveLimit()
+    private fun billReserve(): Double { val b = bill() ?: return 0.0; return if (billReserved(b)) b.total else 0.0 }
     private fun billCash(): Double { val c = cycle.value ?: return 0.0; return dlogs.filter { it.itemId == "bill" && it.time >= c.start }.sumOf { it.amount } }
     fun undoPayment(l: DebtLog) {
         val i = dlogs.indexOf(l); if (i < 0) return

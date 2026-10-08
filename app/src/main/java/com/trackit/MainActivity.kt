@@ -1074,7 +1074,7 @@ fun BillCard(b: Store.Bill?, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("SPayLater bill", style = MaterialTheme.typography.titleMedium)
                 Text(if (b == null) "No bill due · tap to view payments"
-                    else "${SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(b.month))} · ${b.parts.size} purchase${if (b.parts.size > 1) "s" else ""} · due ${fmtDate(b.month)}",
+                    else "${SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(b.month))} · ${b.parts.size} purchase${if (b.parts.size > 1) "s" else ""} · due ${fmtDate(b.month)}" + (if (Store.billReserved(b)) "" else " · not reserved yet"),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(if (b == null) "Paid" else rm(b.total), style = MaterialTheme.typography.titleMedium)
