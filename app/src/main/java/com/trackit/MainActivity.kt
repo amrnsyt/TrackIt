@@ -469,6 +469,7 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
     var cat by remember(t.id) { mutableStateOf(t.category) }
     var inc by remember(t.id) { mutableStateOf(t.income) }
     var cnt by remember(t.id) { mutableStateOf(t.counted) }
+    var splitOpen by remember(t.id) { mutableStateOf(false) }
     var later by remember(t.id) { mutableStateOf(t.later) }
     var months by remember(t.id) { mutableStateOf("1") }
     var fee by remember(t.id) { mutableStateOf("") }
@@ -488,15 +489,20 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
         if (!inc) {
             SectionLabel("Category")
             Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
+            val hist = Store.history(mer)
+            if (hist.isNotEmpty()) Text("Usually: " + hist.joinToString { "${it.first} (${it.second})" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (t.split.isNotBlank()) Text("Split: " + Store.parts(t).joinToString { "${it.first} ${rm(it.second)}" }, style = MaterialTheme.typography.bodySmall)
+            TextButton({ splitOpen = true }, Modifier.fillMaxWidth()) { Text(if (t.split.isNotBlank()) "Edit split" else "Split across categories") }
         }
         if (t.later) Text("SPayLater purchase. Manage or delete the plan in the Debt tab.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         PrimaryButton("Save changes", v != null && v > 0) {
-            val u = t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc, counted = cnt)
+            val u = t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc, counted = cnt, split = if (cat != t.category || Math.abs(v!! - t.amount) > 0.004) "" else t.split)
             Store.updateTxn(t, u)
             close()
         }
         TextButton({ close(); onDelete(t) }, Modifier.fillMaxWidth()) { Text("Delete payment", color = MaterialTheme.colorScheme.error) }
     }
+    if (splitOpen) SplitSheet(t) { splitOpen = false; close() }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -572,6 +578,8 @@ fun TxnRow(t: Txn, onClick: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (t.category == "Uncategorized") Pill("Categorize", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
                     else Text(t.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (t.split.isNotBlank()) Pill("Split", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+                    if (!t.income && t.category != "Uncategorized" && Store.uncertain(t.merchant)) Pill("Check category", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
                     if (t.later) Pill("SPayLater", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
                     Text("· " + SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()).format(Date(t.time)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -1119,5 +1127,30 @@ fun PlanSheet(close: () -> Unit) {
             Store.addPlan(n.trim(), pv!!, months.toIntOrNull() ?: 1, fee.replace(",", ".").toDoubleOrNull() ?: 0.0, date, paid.toIntOrNull() ?: 0, cat.ifBlank { "Uncategorized" }, count && inCycle)
             close()
         }
+    }
+}
+
+@Composable
+fun SplitSheet(t: Txn, close: () -> Unit) {
+    val rows = remember {
+        mutableStateListOf<Pair<String, String>>().apply {
+            if (t.split.isNotBlank()) Store.parts(t).forEach { add(it.first to "%.2f".format(it.second)) }
+            else { add(t.category to "%.2f".format(t.amount)); add("" to "") }
+        }
+    }
+    val sum = rows.sumOf { it.second.replace(",", ".").toDoubleOrNull() ?: 0.0 }
+    val ok = rows.size >= 2 && rows.all { it.first.isNotBlank() && (it.second.replace(",", ".").toDoubleOrNull() ?: 0.0) > 0 } && Math.abs(sum - t.amount) < 0.005
+    Sheet("Split payment", close) {
+        Text("Total ${rm(t.amount)} · allocated ${rm(sum)} · remaining ${rm(t.amount - sum)}", color = if (ok) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+        rows.forEachIndexed { i, (c, a) ->
+            Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, c) { rows[i] = it to a }
+            Field(a, { rows[i] = c to it }, "Amount RM", KeyboardType.Decimal)
+        }
+        Row {
+            TextButton({ rows.add("" to "") }) { Text("Add part") }
+            if (rows.size > 2) TextButton({ rows.removeAt(rows.lastIndex) }) { Text("Remove last") }
+        }
+        PrimaryButton("Save split", ok) { Store.setSplit(t, rows.map { it.first to it.second.replace(",", ".").toDouble() }); close() }
+        if (t.split.isNotBlank()) TextButton({ Store.setSplit(t, emptyList()); close() }, Modifier.fillMaxWidth()) { Text("Remove split", color = MaterialTheme.colorScheme.error) }
     }
 }
