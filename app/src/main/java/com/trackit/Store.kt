@@ -290,6 +290,13 @@ object Store {
         return if (nx == 0L || b.month <= nx) b.total else 0.0
     }
     private fun billCash(): Double { val c = cycle.value ?: return 0.0; return dlogs.filter { it.itemId == "bill" && it.time >= c.start }.sumOf { it.amount } }
+    fun undoPayment(l: DebtLog) {
+        val i = dlogs.indexOf(l); if (i < 0) return
+        dlogs.removeAt(i)
+        val k = debts.indexOfFirst { it.id == l.debtId }
+        if (k >= 0) debts[k] = debts[k].copy(balance = debts[k].balance + l.amount)
+        saveC()
+    }
     fun payBill(amount: Double) {
         val b = bill() ?: return
         var left = amount

@@ -835,7 +835,7 @@ fun Commitment() {
                 }
             }
         }
-        if (bill != null) item { BillCard(bill) { billSheet = true } }
+        if (bill != null || Store.dlogs.any { it.itemId == "bill" }) item { BillCard(bill) { billSheet = true } }
         if (Store.items.isEmpty() && bill == null) item { EmptyState(Icons.Filled.Event, "No commitments", "Add rent, loans or bills you need to pay this cycle. Saved ones can be picked again next cycle.") }
         items(sorted, key = { it.id }) { i ->
             val soon = !i.paid && i.due > 0 && (i.due - today) in 0..3
@@ -1033,7 +1033,12 @@ fun DebtSheet(old: Debt?, close: () -> Unit) {
             val logs = Store.dlogs.filter { it.debtId == old.id }.take(8)
             if (logs.isNotEmpty()) {
                 SectionLabel("Payment history")
-                logs.forEach { Text("${fmtDate(it.time)} · −${rm(it.amount)}") }
+                logs.forEach { l ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("${fmtDate(l.time)} · −${rm(l.amount)}", Modifier.weight(1f))
+                        if (l.itemId == "bill") TextButton({ Store.undoPayment(l) }) { Text("Undo") }
+                    }
+                }
             }
             TextButton({ Store.delDebt(old); close() }, Modifier.fillMaxWidth()) { Text("Delete debt", color = MaterialTheme.colorScheme.error) }
         }
@@ -1058,7 +1063,7 @@ fun LaterOptions(on: Boolean, onOn: (Boolean) -> Unit, months: String, onMonths:
 }
 
 @Composable
-fun BillCard(b: Store.Bill, onClick: () -> Unit) {
+fun BillCard(b: Store.Bill?, onClick: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1067,10 +1072,11 @@ fun BillCard(b: Store.Bill, onClick: () -> Unit) {
             }
             Column(Modifier.weight(1f)) {
                 Text("SPayLater bill", style = MaterialTheme.typography.titleMedium)
-                Text("${SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(b.month))} · ${b.parts.size} purchase${if (b.parts.size > 1) "s" else ""} · due ${fmtDate(b.month)}",
+                Text(if (b == null) "No bill due · tap to view payments"
+                    else "${SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(b.month))} · ${b.parts.size} purchase${if (b.parts.size > 1) "s" else ""} · due ${fmtDate(b.month)}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(rm(b.total), style = MaterialTheme.typography.titleMedium)
+            Text(if (b == null) "Paid" else rm(b.total), style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -1078,21 +1084,37 @@ fun BillCard(b: Store.Bill, onClick: () -> Unit) {
 @Composable
 fun BillSheet(close: () -> Unit) {
     val b = Store.bill()
-    if (b == null) { LaunchedEffect(Unit) { close() }; return }
-    var amt by remember { mutableStateOf("%.2f".format(b.total)) }
+    val logs = Store.dlogs.filter { l -> l.itemId == "bill" && Store.debts.any { it.id == l.debtId } }.take(12)
+    if (b == null && logs.isEmpty()) { LaunchedEffect(Unit) { close() }; return }
+    var amt by remember(b?.total) { mutableStateOf(b?.let { "%.2f".format(it.total) } ?: "") }
     val v = amt.replace(",", ".").toDoubleOrNull()
     Sheet("SPayLater bill", close) {
-        Text("Due ${fmtDate(b.month)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        b.parts.forEach { (d, due) ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(d.name.removePrefix("SPayLater · "), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(rm(due), fontWeight = FontWeight.SemiBold)
+        if (b != null) {
+            Text("Due ${fmtDate(b.month)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            b.parts.forEach { (d, due) ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(d.name.removePrefix("SPayLater · "), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(rm(due), fontWeight = FontWeight.SemiBold)
+                }
+            }
+            HorizontalDivider()
+            Field(amt, { amt = it }, "Amount to pay RM", KeyboardType.Decimal)
+            Text("Paying less than the total is a partial payment. The remainder stays due.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            PrimaryButton("Pay ${rm(v ?: 0.0)}", v != null && v > 0 && v <= b.total + 0.005) { Store.payBill(v!!); close() }
+        } else Text("No bill due right now.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (logs.isNotEmpty()) {
+            HorizontalDivider()
+            SectionLabel("Payment history")
+            logs.forEach { l ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(Store.debts.firstOrNull { it.id == l.debtId }?.name?.removePrefix("SPayLater · ") ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${fmtDate(l.time)} · ${rm(l.amount)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton({ Store.undoPayment(l) }) { Text("Undo") }
+                }
             }
         }
-        HorizontalDivider()
-        Field(amt, { amt = it }, "Amount to pay RM", KeyboardType.Decimal)
-        Text("Paying less than the total is a partial payment. The remainder stays due.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        PrimaryButton("Pay ${rm(v ?: 0.0)}", v != null && v > 0 && v <= b.total + 0.005) { Store.payBill(v!!); close() }
     }
 }
 
