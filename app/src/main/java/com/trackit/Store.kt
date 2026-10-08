@@ -16,7 +16,7 @@ data class Category(
     val name: String, val keywords: String, val budget: Double = 0.0,
     val period: String = "MONTHLY", val startDay: Int = 1, val periodStart: Long = 0L
 )
-data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false, val counted: Boolean = true, val later: Boolean = false, val planId: String = "", val split: String = "")
+data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false, val counted: Boolean = true, val later: Boolean = false, val planId: String = "", val split: String = "", val billPay: Boolean = false)
 data class Tpl(val id: String, val name: String, val amount: Double, val due: Int, val catName: String = "", val debtId: String = "")
 data class Debt(val id: String, val name: String, val total: Double, val balance: Double, val monthly: Double, val due: Int, val firstDue: Long = 0L, val months: Int = 0)
 data class DebtLog(val debtId: String, val itemId: String, val time: Long, val amount: Double)
@@ -74,7 +74,7 @@ object Store {
             Category("Bills", "tnb,unifi,maxis,celcom,digi,water")))
         JSONArray(s.getString("txns", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let {
-                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false), it.optBoolean("k", true), it.optBoolean("l", false), it.optString("pl", ""), it.optString("sp", "")))
+                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false), it.optBoolean("k", true), it.optBoolean("l", false), it.optString("pl", ""), it.optString("sp", ""), it.optBoolean("bp", false)))
             }
         }
         JSONArray(s.getString("snaps", "[]")).let { a ->
@@ -128,7 +128,7 @@ object Store {
 
     private fun save() {
         val c = JSONArray().also { a -> cats.forEach { a.put(JSONObject().put("n", it.name).put("k", it.keywords).put("b", it.budget).put("p", it.period).put("d", it.startDay).put("s", it.periodStart)) } }
-        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income).put("k", it.counted).put("l", it.later).put("pl", it.planId).put("sp", it.split)) } }
+        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income).put("k", it.counted).put("l", it.later).put("pl", it.planId).put("sp", it.split).put("bp", it.billPay)) } }
         val h = JSONArray().also { a -> snaps.forEach { a.put(JSONObject().put("i", it.id).put("c", it.category).put("s", it.start).put("e", it.end).put("b", it.budget).put("a", it.spent)) } }
         sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString()).apply()
     }
@@ -192,7 +192,7 @@ object Store {
         sp().edit().putString("debts", dj.toString()).putString("dlogs", lj.toString()).putString("tpl", t.toString()).putString("items", m.toString()).putString("csnaps", h.toString()).putString("cyc", c).apply()
     }
     fun cycleSpent(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && !it.later && it.time >= c.start }.sumOf { it.amount } }
-    fun cycleBought(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && it.time >= c.start }.sumOf { it.amount } }
+    fun cycleBought(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && !it.billPay && it.time >= c.start }.sumOf { it.amount } }
     fun unpaid(): Double = items.filter { !it.paid }.sumOf { it.amount } + billReserve()
     fun cycleIncome(): Double { val c = cycle.value ?: return 0.0; return txns.filter { it.income && it.counted && it.time >= c.start }.sumOf { it.amount } }
     fun paidManual(): Double = items.filter { it.paid && it.txnId.isEmpty() }.sumOf { it.amount }
@@ -229,7 +229,7 @@ object Store {
         saveC()
     }
     fun delDebt(d: Debt) {
-        debts.remove(d); dlogs.removeAll { it.debtId == d.id && it.itemId != "bill" }
+        debts.remove(d); dlogs.removeAll { it.debtId == d.id && !it.itemId.startsWith("bill") }
         if (txns.removeAll { it.planId == d.id }) save()
         for (k in items.indices) if (items[k].debtId == d.id) items[k] = items[k].copy(debtId = "")
         for (k in tpls.indices) if (tpls[k].debtId == d.id) tpls[k] = tpls[k].copy(debtId = "")
@@ -250,7 +250,7 @@ object Store {
         return c.timeInMillis
     }
     private fun clearPlan(id: String) {
-        debts.removeAll { it.id == id }; dlogs.removeAll { it.debtId == id && it.itemId != "bill" }; tpls.removeAll { it.id == id }; items.removeAll { it.id == id && !it.paid }
+        debts.removeAll { it.id == id }; dlogs.removeAll { it.debtId == id && !it.itemId.startsWith("bill") }; tpls.removeAll { it.id == id }; items.removeAll { it.id == id && !it.paid }
         saveC()
     }
     fun setLater(t: Txn, on: Boolean, months: Int, fee: Double, paid: Int = 0) {
@@ -293,11 +293,12 @@ object Store {
     fun undoPayment(l: DebtLog) {
         val i = dlogs.indexOf(l); if (i < 0) return
         dlogs.removeAt(i)
+        if (l.itemId.startsWith("billtx:")) { val ti = txns.indexOfFirst { it.id == l.itemId.removePrefix("billtx:") }; if (ti >= 0) { txns[ti] = txns[ti].copy(billPay = false); save() } }
         val k = debts.indexOfFirst { it.id == l.debtId }
         if (k >= 0) debts[k] = debts[k].copy(balance = debts[k].balance + l.amount)
         saveC()
     }
-    fun payBill(amount: Double) {
+    fun payBill(amount: Double, txnId: String? = null) {
         val b = bill() ?: return
         var left = amount
         for ((d, due) in b.parts) {
@@ -305,10 +306,17 @@ object Store {
             val pay = minOf(left, due)
             val k = debts.indexOfFirst { it.id == d.id }; if (k < 0) continue
             debts[k] = debts[k].copy(balance = (debts[k].balance - pay).coerceAtLeast(0.0))
-            dlogs.add(0, DebtLog(d.id, "bill", System.currentTimeMillis(), pay))
+            dlogs.add(0, DebtLog(d.id, if (txnId != null) "billtx:$txnId" else "bill", System.currentTimeMillis(), pay))
             left -= pay
         }
+        if (txnId != null) { val ti = txns.indexOfFirst { it.id == txnId }; if (ti >= 0) { txns[ti] = txns[ti].copy(billPay = true); save() } }
         saveC()
+    }
+    private fun autoBill(t: Txn): Boolean {
+        val b = bill() ?: return false
+        val m = t.merchant.lowercase()
+        if (Math.abs(t.amount - b.total) > 0.005 || !(m.contains("shopee") || m.contains("spay"))) return false
+        payBill(b.total, t.id); return true
     }
     fun addPlan(name: String, price: Double, months: Int, fee: Double, time: Long, paid: Int, cat: String, count: Boolean) {
         val total = Math.round(price * (1 + fee / 100.0 * months) * 100) / 100.0
@@ -344,7 +352,7 @@ object Store {
         val a = JSONArray(t.split)
         return (0 until a.length()).map { a.getJSONArray(it).let { p -> p.getString(0) to p.getDouble(1) } }
     }
-    fun catAmt(t: Txn, cat: String): Double = parts(t).filter { it.first == cat }.sumOf { it.second }
+    fun catAmt(t: Txn, cat: String): Double = if (t.billPay) 0.0 else parts(t).filter { it.first == cat }.sumOf { it.second }
     fun setSplit(t: Txn, p: List<Pair<String, Double>>) {
         val i = txns.indexOfFirst { it.id == t.id }; if (i < 0) return
         if (p.isEmpty()) { txns[i] = txns[i].copy(split = ""); save(); return }
@@ -405,7 +413,7 @@ object Store {
             return null
         }
         txns.add(0, t); save()
-        if (!t.income) { learnMerchant(t.merchant, t.category, 1); autoPay(t); alert(t.category) }
+        if (!t.income) { learnMerchant(t.merchant, t.category, 1); autoPay(t); if (!autoBill(t)) alert(t.category) }
         return t
     }
     fun updateTxn(old: Txn, n: Txn) {

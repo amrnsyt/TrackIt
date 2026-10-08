@@ -292,7 +292,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     val today = week.firstOrNull { now - it in 0 until 86400000L } ?: week[0]
     val rows = Store.cats.map { it to Store.spent(it) }
     val monthStart = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
-    val unc = Store.txns.filter { it.category == "Uncategorized" && it.time >= monthStart }.sumOf { it.amount }
+    val unc = Store.txns.filter { it.category == "Uncategorized" && !it.billPay && it.time >= monthStart }.sumOf { it.amount }
     val cyc = Store.cycle.value
     val total = if (cyc != null) Store.cycleBought() else rows.sumOf { it.second } + unc
     val base = if (cyc != null) Store.txns.filter { it.time >= cyc.start } else Store.txns.toList()
@@ -301,7 +301,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     val budgeted = rows.filter { it.first.budget > 0 }
     val bTotal = budgeted.sumOf { it.first.budget }; val bSpent = budgeted.sumOf { it.second }
     val shown by animateFloatAsState(total.toFloat(), tween(600), label = "total")
-    val needs = base.count { it.category == "Uncategorized" }
+    val needs = base.count { it.category == "Uncategorized" && !it.billPay }
     val list0 = sel?.let { s -> base.filter { it.time >= s && it.time < s + 86400000L } } ?: base
     val groups = list0.groupBy { dayLabel(it.time) }
     val cards = rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }
@@ -576,7 +576,8 @@ fun TxnRow(t: Txn, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(t.merchant, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (t.category == "Uncategorized") Pill("Categorize", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                    if (t.billPay) Pill("SPayLater bill", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+                    else if (t.category == "Uncategorized") Pill("Categorize", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
                     else Text(t.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (t.split.isNotBlank()) Pill("Split", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
                     if (!t.income && t.category != "Uncategorized" && Store.uncertain(t.merchant)) Pill("Check category", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
@@ -622,7 +623,7 @@ fun trend(monthly: Boolean): List<Pair<String, Double>> {
             if (monthly) { set(Calendar.DAY_OF_MONTH, 1); add(Calendar.MONTH, -i) } else add(Calendar.DAY_OF_MONTH, -i)
         }
         val e = (s.clone() as Calendar).apply { if (monthly) add(Calendar.MONTH, 1) else add(Calendar.DAY_OF_MONTH, 1) }
-        fmt.format(s.time) to Store.txns.filter { !it.income && it.time >= s.timeInMillis && it.time < e.timeInMillis }.sumOf { it.amount }
+        fmt.format(s.time) to Store.txns.filter { !it.income && !it.billPay && it.time >= s.timeInMillis && it.time < e.timeInMillis }.sumOf { it.amount }
     }
 }
 
@@ -835,7 +836,7 @@ fun Commitment() {
                 }
             }
         }
-        if (bill != null || Store.dlogs.any { it.itemId == "bill" }) item { BillCard(bill) { billSheet = true } }
+        if (bill != null || Store.dlogs.any { it.itemId.startsWith("bill") }) item { BillCard(bill) { billSheet = true } }
         if (Store.items.isEmpty() && bill == null) item { EmptyState(Icons.Filled.Event, "No commitments", "Add rent, loans or bills you need to pay this cycle. Saved ones can be picked again next cycle.") }
         items(sorted, key = { it.id }) { i ->
             val soon = !i.paid && i.due > 0 && (i.due - today) in 0..3
@@ -1036,7 +1037,7 @@ fun DebtSheet(old: Debt?, close: () -> Unit) {
                 logs.forEach { l ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("${fmtDate(l.time)} · −${rm(l.amount)}", Modifier.weight(1f))
-                        if (l.itemId == "bill") TextButton({ Store.undoPayment(l) }) { Text("Undo") }
+                        if (l.itemId.startsWith("bill")) TextButton({ Store.undoPayment(l) }) { Text("Undo") }
                     }
                 }
             }
@@ -1084,10 +1085,13 @@ fun BillCard(b: Store.Bill?, onClick: () -> Unit) {
 @Composable
 fun BillSheet(close: () -> Unit) {
     val b = Store.bill()
-    val logs = Store.dlogs.filter { l -> l.itemId == "bill" && Store.debts.any { it.id == l.debtId } }.take(12)
+    val logs = Store.dlogs.filter { l -> l.itemId.startsWith("bill") && Store.debts.any { it.id == l.debtId } }.take(12)
     if (b == null && logs.isEmpty()) { LaunchedEffect(Unit) { close() }; return }
     var amt by remember(b?.total) { mutableStateOf(b?.let { "%.2f".format(it.total) } ?: "") }
+    var link by remember { mutableStateOf(false) }
+    var pick by remember { mutableStateOf<String?>(null) }
     val v = amt.replace(",", ".").toDoubleOrNull()
+    val cands = Store.txns.filter { !it.income && !it.later && !it.billPay && it.time > System.currentTimeMillis() - 45L * 86400000L }.take(15)
     Sheet("SPayLater bill", close) {
         if (b != null) {
             Text("Due ${fmtDate(b.month)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1098,9 +1102,23 @@ fun BillSheet(close: () -> Unit) {
                 }
             }
             HorizontalDivider()
+            Chips(listOf("N" to "New payment", "L" to "Already recorded"), if (link) "L" else "N") { link = it == "L"; pick = null }
+            if (link) {
+                Text("Use this if the bill was already paid and the payment is in your list. It is counted once in your balance and removed from category spending.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (cands.isEmpty()) Text("No recent payments found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                cands.forEach { t ->
+                    Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable { pick = t.id; amt = "%.2f".format(minOf(t.amount, b.total)) }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(pick == t.id, { pick = t.id; amt = "%.2f".format(minOf(t.amount, b.total)) })
+                        Column(Modifier.weight(1f)) {
+                            Text(t.merchant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${fmtDate(t.time)} · ${rm(t.amount)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
             Field(amt, { amt = it }, "Amount to pay RM", KeyboardType.Decimal)
             Text("Paying less than the total is a partial payment. The remainder stays due.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            PrimaryButton("Pay ${rm(v ?: 0.0)}", v != null && v > 0 && v <= b.total + 0.005) { Store.payBill(v!!); close() }
+            PrimaryButton("Pay ${rm(v ?: 0.0)}", v != null && v > 0 && v <= b.total + 0.005 && (!link || pick != null)) { Store.payBill(v!!, pick); close() }
         } else Text("No bill due right now.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (logs.isNotEmpty()) {
             HorizontalDivider()
@@ -1109,7 +1127,7 @@ fun BillSheet(close: () -> Unit) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(Store.debts.firstOrNull { it.id == l.debtId }?.name?.removePrefix("SPayLater · ") ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${fmtDate(l.time)} · ${rm(l.amount)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${fmtDate(l.time)} · ${rm(l.amount)}" + if (l.itemId.startsWith("billtx:")) " · linked payment" else "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     TextButton({ Store.undoPayment(l) }) { Text("Undo") }
                 }
