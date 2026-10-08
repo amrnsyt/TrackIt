@@ -459,7 +459,7 @@ fun History() {
 
 @Composable
 fun Field(v: String, onChange: (String) -> Unit, label: String, kb: KeyboardType = KeyboardType.Text, err: String? = null) =
-    OutlinedTextField(v, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = kb != KeyboardType.Text || label == "Name" || label == "Merchant" || label.startsWith("Merchant"),
+    OutlinedTextField(v, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = kb != KeyboardType.Text || label == "Name" || label == "Merchant" || label.startsWith("Merchant") || label.startsWith("Carry"),
         isError = err != null, supportingText = { if (err != null) Text(err) }, shape = MaterialTheme.shapes.medium, keyboardOptions = KeyboardOptions(keyboardType = kb))
 
 @Composable
@@ -656,7 +656,7 @@ fun TrendCard() {
 
 @Composable
 fun CycleSnapCard(c: CSnap) {
-    val left = c.salary + c.income - c.committed - c.spent
+    val left = c.salary + c.carryIn + c.income - c.committed - c.spent
     Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -671,7 +671,9 @@ fun CycleSnapCard(c: CSnap) {
                     if (left >= 0) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
                     if (left >= 0) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer)
             }
-            BudgetBar(c.committed + c.spent, c.salary + c.income)
+            BudgetBar(c.committed + c.spent, c.salary + c.carryIn + c.income)
+            if (c.carryIn != 0.0) Text("Carried in " + (if (c.carryIn > 0) "+" else "−") + rm(Math.abs(c.carryIn)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (c.carryOut != 0.0) Text("Carried to next cycle " + (if (c.carryOut > 0) "+" else "−") + rm(Math.abs(c.carryOut)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Salary ${rm(c.salary)}" + (if (c.income > 0) " + ${rm(c.income)} income" else "") + " · spent ${rm(c.spent)} · unpaid commitments ${rm(c.committed)}", style = MaterialTheme.typography.bodyMedium)
         }
     }
@@ -784,7 +786,7 @@ fun Commitment() {
                         Pill(if (Store.hideBal.value) "Amounts hidden" else "Safe to spend ${rm(safe)} after unpaid",
                             if (safe < 0) MaterialTheme.colorScheme.errorContainer else Color.White.copy(alpha = 0.55f),
                             if (safe < 0) MaterialTheme.colorScheme.onErrorContainer else ink)
-                        val tot = (cyc.salary + inc).coerceAtLeast(1.0)
+                        val tot = (cyc.salary + cyc.carry + inc).coerceAtLeast(1.0)
                         val sp = (spent / tot).toFloat().coerceAtLeast(0f); val up = (unpaid / tot).toFloat().coerceAtLeast(0f); val sf = (safe / tot).toFloat().coerceAtLeast(0f)
                         val sum = (sp + up + sf).coerceAtLeast(1f)
                         Row(Modifier.fillMaxWidth().height(14.dp).clip(CircleShape)) {
@@ -797,7 +799,7 @@ fun Commitment() {
                         }
                         Surface(color = Color.White.copy(alpha = 0.45f), shape = MaterialTheme.shapes.large) {
                             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-                                Stat("Salary", mk(rm(cyc.salary))); Stat("Income", mk("+" + rm(inc))); Stat("Spent & paid", mk(rm(spent)))
+                                Stat("Salary", mk(rm(cyc.salary))); if (cyc.carry != 0.0) Stat("Carried forward", mk((if (cyc.carry > 0) "+" else "−") + rm(Math.abs(cyc.carry)))); Stat("Income", mk("+" + rm(inc))); Stat("Spent & paid", mk(rm(spent)))
                             }
                         }
                         Text(if (Store.hideBal.value) "Next salary: " + (if (cyc.next > 0) fmtDate(cyc.next) else "not set")
@@ -893,8 +895,21 @@ fun CycleSheet(newCycle: Boolean, close: () -> Unit) {
     var next by remember { mutableLongStateOf(cyc?.next ?: 0L) }
     val chosen = remember { mutableStateListOf<String>().apply { addAll(Store.tpls.map { it.id }) } }
     val v = sal.replace(",", ".").toDoubleOrNull()
+    val prev = Store.cashLeft()
+    var carryOn by remember { mutableStateOf(true) }
+    var carryTxt by remember { mutableStateOf(if (newCycle) "%.2f".format(prev) else "%.2f".format(cyc?.carry ?: 0.0)) }
+    val cv = carryTxt.replace(",", ".").toDoubleOrNull()
+    val needCarry = (newCycle && cyc != null && carryOn) || !newCycle
     Sheet(if (newCycle) "Start new cycle" else "Edit salary", close) {
         Field(sal, { sal = it }, "Salary RM", KeyboardType.Decimal)
+        if (newCycle && cyc != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Carry forward previous balance")
+                Text("Previous balance ${rm(prev)}" + if (prev < 0) " (overspent, will be deducted)" else "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(carryOn, { carryOn = it })
+        }
+        if (needCarry) Field(carryTxt, { carryTxt = it }, "Carry forward amount RM")
         if (newCycle) DateButton("Salary received", recv) { recv = it }
         DateButton("Next salary (estimate)", next) { next = it }
         if (next > 0) TextButton({ next = 0L }) { Text("Clear next salary date") }
@@ -908,8 +923,9 @@ fun CycleSheet(newCycle: Boolean, close: () -> Unit) {
                 }
             }
         }
-        PrimaryButton(if (newCycle) "Start cycle" else "Save", v != null && v > 0) {
-            if (newCycle) Store.startCycle(v!!, recv, next, Store.tpls.filter { it.id in chosen }) else Store.editCycle(v!!, next)
+        PrimaryButton(if (newCycle) "Start cycle" else "Save", v != null && v > 0 && (!needCarry || cv != null)) {
+            val cr = if (needCarry) (cv ?: 0.0) else 0.0
+            if (newCycle) Store.startCycle(v!!, recv, next, Store.tpls.filter { it.id in chosen }, cr) else Store.editCycle(v!!, next, cr)
             close()
         }
     }
