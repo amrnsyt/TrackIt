@@ -96,6 +96,11 @@ object Store {
         JSONArray(s.getString("dlogs", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let { dlogs.add(DebtLog(it.getString("d"), it.getString("i"), it.getLong("t"), it.getDouble("a"))) }
         }
+        val pids = debts.filter { it.months > 0 }.map { it.id }
+        if (pids.isNotEmpty()) {
+            items.removeAll { it.id in pids }; tpls.removeAll { it.id in pids }
+            for (i in dlogs.indices) if (dlogs[i].debtId in pids && dlogs[i].itemId in pids) dlogs[i] = dlogs[i].copy(itemId = "bill")
+        }
         val cy = s.getString("cyc", "") ?: ""
         cycle.value = if (cy.isBlank()) null else JSONObject(cy).let { Cycle(it.getLong("s"), it.getDouble("y"), it.optLong("x", 0L)) }
     }
@@ -184,10 +189,10 @@ object Store {
     }
     fun cycleSpent(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && !it.later && it.time >= c.start }.sumOf { it.amount } }
     fun cycleBought(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && it.time >= c.start }.sumOf { it.amount } }
-    fun unpaid(): Double = items.filter { !it.paid }.sumOf { it.amount }
+    fun unpaid(): Double = items.filter { !it.paid }.sumOf { it.amount } + billReserve()
     fun cycleIncome(): Double { val c = cycle.value ?: return 0.0; return txns.filter { it.income && it.counted && it.time >= c.start }.sumOf { it.amount } }
     fun paidManual(): Double = items.filter { it.paid && it.txnId.isEmpty() }.sumOf { it.amount }
-    fun spentAll(): Double = cycleSpent() + paidManual()
+    fun spentAll(): Double = cycleSpent() + paidManual() + billCash()
     fun cashLeft(): Double = (cycle.value?.salary ?: 0.0) + cycleIncome() - spentAll()
     fun cycleLeft(): Double = cashLeft() - unpaid()
     fun startCycle(salary: Double, start: Long, next: Long, chosen: List<Tpl>) {
@@ -220,7 +225,8 @@ object Store {
         saveC()
     }
     fun delDebt(d: Debt) {
-        debts.remove(d); dlogs.removeAll { it.debtId == d.id }
+        debts.remove(d); dlogs.removeAll { it.debtId == d.id && it.itemId != "bill" }
+        if (txns.removeAll { it.planId == d.id }) save()
         for (k in items.indices) if (items[k].debtId == d.id) items[k] = items[k].copy(debtId = "")
         for (k in tpls.indices) if (tpls[k].debtId == d.id) tpls[k] = tpls[k].copy(debtId = "")
         saveC()
@@ -238,7 +244,7 @@ object Store {
         return c.timeInMillis
     }
     private fun clearPlan(id: String) {
-        debts.removeAll { it.id == id }; dlogs.removeAll { it.debtId == id }; tpls.removeAll { it.id == id }; items.removeAll { it.id == id && !it.paid }
+        debts.removeAll { it.id == id }; dlogs.removeAll { it.debtId == id && it.itemId != "bill" }; tpls.removeAll { it.id == id }; items.removeAll { it.id == id && !it.paid }
         saveC()
     }
     fun setLater(t: Txn, on: Boolean, months: Int, fee: Double, paid: Int = 0) {
@@ -257,6 +263,51 @@ object Store {
         }
         txns[i] = cur.copy(later = true, planId = d.id)
         save(); saveC()
+    }
+    data class Bill(val month: Long, val total: Double, val parts: List<Pair<Debt, Double>>)
+    fun amountDue(d: Debt): Double {
+        val paid = d.total - d.balance
+        val k = Math.floor(paid / d.monthly + 0.0001)
+        return minOf(d.balance, (k + 1) * d.monthly - paid).coerceAtLeast(0.0)
+    }
+    fun bill(): Bill? {
+        val ps = debts.filter { it.months > 0 && it.monthly > 0 && it.balance > 0.005 }
+        if (ps.isEmpty()) return null
+        val due = ps.minOf { nextDue(it) }
+        val parts = ps.filter { nextDue(it) == due }.map { it to amountDue(it) }
+        return Bill(due, parts.sumOf { it.second }, parts)
+    }
+    private fun billReserve(): Double {
+        val b = bill() ?: return 0.0
+        val nx = cycle.value?.next ?: 0L
+        return if (nx == 0L || b.month <= nx) b.total else 0.0
+    }
+    private fun billCash(): Double { val c = cycle.value ?: return 0.0; return dlogs.filter { it.itemId == "bill" && it.time >= c.start }.sumOf { it.amount } }
+    fun payBill(amount: Double) {
+        val b = bill() ?: return
+        var left = amount
+        for ((d, due) in b.parts) {
+            if (left <= 0.005) break
+            val pay = minOf(left, due)
+            val k = debts.indexOfFirst { it.id == d.id }; if (k < 0) continue
+            debts[k] = debts[k].copy(balance = (debts[k].balance - pay).coerceAtLeast(0.0))
+            dlogs.add(0, DebtLog(d.id, "bill", System.currentTimeMillis(), pay))
+            left -= pay
+        }
+        saveC()
+    }
+    fun addPlan(name: String, price: Double, months: Int, fee: Double, time: Long, paid: Int, cat: String, count: Boolean) {
+        val total = price * (1 + fee / 100.0 * months)
+        val monthly = total / months
+        val bal = (total - paid.coerceIn(0, months) * monthly).coerceAtLeast(0.0)
+        val id = "pl" + System.nanoTime()
+        debts.add(Debt(id, "SPayLater · $name".take(40), total, bal, monthly, 31, dueEnd(time), months))
+        if (count) {
+            val l = (txns + Txn("pl:$id", price, name, cat, time, false, true, true, id)).sortedByDescending { it.time }
+            txns.clear(); txns.addAll(l); save()
+            if (cat != "Uncategorized") alert(cat)
+        }
+        saveC()
     }
     private fun payDebt(i: Item, paid: Boolean) {
         if (i.debtId.isBlank()) return

@@ -489,12 +489,10 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
             SectionLabel("Category")
             Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
         }
-        if (!inc) LaterOptions(later, { later = it }, months, { months = it }, fee, { fee = it }, paidN, { paidN = it }, later && !t.later)
-        if (later && t.later) Text("The SPayLater plan is managed in the Debt tab. Turn the switch off to remove it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (t.later) Text("SPayLater purchase. Manage or delete the plan in the Debt tab.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         PrimaryButton("Save changes", v != null && v > 0) {
             val u = t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc, counted = cnt)
             Store.updateTxn(t, u)
-            if (!inc && later != t.later) Store.setLater(u, later, months.toIntOrNull() ?: 1, fee.replace(",", ".").toDoubleOrNull() ?: 0.0, paidN.toIntOrNull() ?: 0)
             close()
         }
         TextButton({ close(); onDelete(t) }, Modifier.fillMaxWidth()) { Text("Delete payment", color = MaterialTheme.colorScheme.error) }
@@ -520,11 +518,9 @@ fun AddTxnSheet(close: () -> Unit) {
         SectionLabel("Category")
         Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
         OutlinedButton({ pickDate = true }, Modifier.fillMaxWidth().height(52.dp)) { Icon(Icons.Filled.Event, null); Spacer(Modifier.width(8.dp)); Text(fmtDate(time)) }
-        LaterOptions(later, { later = it }, months, { months = it }, fee, { fee = it }, paidN, { paidN = it }, later)
         PrimaryButton("Save payment", v != null && v > 0) {
             val tx = Txn("manual:${System.nanoTime()}", v!!, note.trim().ifBlank { "Manual" }, cat, time)
             Store.addManual(tx)
-            if (later) Store.setLater(tx, true, months.toIntOrNull() ?: 1, fee.replace(",", ".").toDoubleOrNull() ?: 0.0, paidN.toIntOrNull() ?: 0)
             close()
         }
     }
@@ -745,6 +741,8 @@ fun Commitment() {
     var sheet by remember { mutableStateOf<String?>(null) }
     var editItem by remember { mutableStateOf<Item?>(null) }
     var addItem by remember { mutableStateOf(false) }
+    var billSheet by remember { mutableStateOf(false) }
+    val bill = Store.bill()
     val safe = Store.cycleLeft(); val bal = Store.cashLeft(); val inc = Store.cycleIncome()
     val spent = Store.spentAll(); val unpaid = Store.unpaid()
     val balShown by animateFloatAsState(bal.toFloat(), tween(700), label = "bal")
@@ -829,7 +827,8 @@ fun Commitment() {
                 }
             }
         }
-        if (Store.items.isEmpty()) item { EmptyState(Icons.Filled.Event, "No commitments", "Add rent, loans or bills you need to pay this cycle. Saved ones can be picked again next cycle.") }
+        if (bill != null) item { BillCard(bill) { billSheet = true } }
+        if (Store.items.isEmpty() && bill == null) item { EmptyState(Icons.Filled.Event, "No commitments", "Add rent, loans or bills you need to pay this cycle. Saved ones can be picked again next cycle.") }
         items(sorted, key = { it.id }) { i ->
             val soon = !i.paid && i.due > 0 && (i.due - today) in 0..3
             Card(modifier = Modifier.fillMaxWidth().alpha(if (i.paid) 0.65f else 1f).enter(sorted.indexOf(i) + 2).animateItem(), shape = MaterialTheme.shapes.large, onClick = { editItem = i },
@@ -853,6 +852,7 @@ fun Commitment() {
     sheet?.let { CycleSheet(it == "new") { sheet = null } }
     if (addItem) ItemSheet(null) { addItem = false }
     editItem?.let { ItemSheet(it) { editItem = null } }
+    if (billSheet) BillSheet { billSheet = false }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -943,6 +943,7 @@ fun ItemSheet(old: Item?, close: () -> Unit) {
 fun DebtScreen() {
     var sheet by remember { mutableStateOf<Debt?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var addPl by remember { mutableStateOf(false) }
     val total = Store.debts.sumOf { it.balance }
     val orig = Store.debts.sumOf { it.total }
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
@@ -979,9 +980,15 @@ fun DebtScreen() {
                 }
             }
         }
-        item { PrimaryButton("Add a debt") { adding = true } }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryButton("Add SPayLater purchase") { addPl = true }
+                OutlinedButton({ adding = true }, Modifier.fillMaxWidth().height(54.dp)) { Text("Add other debt") }
+            }
+        }
     }
     if (adding) DebtSheet(null) { adding = false }
+    if (addPl) PlanSheet { addPl = false }
     sheet?.let { DebtSheet(it) { sheet = null } }
 }
 
@@ -1039,5 +1046,78 @@ fun LaterOptions(on: Boolean, onOn: (Boolean) -> Unit, months: String, onMonths:
         Chips(listOf("1" to "Next month", "3" to "3 months", "6" to "6 months", "12" to "12 months"), months, onMonths)
         Field(fee, onFee, "Fee % per month (optional)", KeyboardType.Decimal)
         Field(paid, { onPaid(it.filter { c -> c.isDigit() }.take(2)) }, "Instalments already paid (0 if new)", KeyboardType.Number)
+    }
+}
+
+@Composable
+fun BillCard(b: Store.Bill, onClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.CreditCard, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+            Column(Modifier.weight(1f)) {
+                Text("SPayLater bill", style = MaterialTheme.typography.titleMedium)
+                Text("${SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(b.month))} · ${b.parts.size} purchase${if (b.parts.size > 1) "s" else ""} · due ${fmtDate(b.month)}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(rm(b.total), style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+fun BillSheet(close: () -> Unit) {
+    val b = Store.bill()
+    if (b == null) { LaunchedEffect(Unit) { close() }; return }
+    var amt by remember { mutableStateOf("%.2f".format(b.total)) }
+    val v = amt.replace(",", ".").toDoubleOrNull()
+    Sheet("SPayLater bill", close) {
+        Text("Due ${fmtDate(b.month)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        b.parts.forEach { (d, due) ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(d.name.removePrefix("SPayLater · "), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(rm(due), fontWeight = FontWeight.SemiBold)
+            }
+        }
+        HorizontalDivider()
+        Field(amt, { amt = it }, "Amount to pay RM", KeyboardType.Decimal)
+        Text("Paying less than the total is a partial payment. The remainder stays due.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        PrimaryButton("Pay ${rm(v ?: 0.0)}", v != null && v > 0 && v <= b.total + 0.005) { Store.payBill(v!!); close() }
+    }
+}
+
+@Composable
+fun PlanSheet(close: () -> Unit) {
+    val cyc = Store.cycle.value
+    var n by remember { mutableStateOf("") }
+    var p by remember { mutableStateOf("") }
+    var months by remember { mutableStateOf("6") }
+    var fee by remember { mutableStateOf("") }
+    var date by remember { mutableLongStateOf(todayStart()) }
+    var paid by remember { mutableStateOf("0") }
+    var cat by remember { mutableStateOf("") }
+    var count by remember { mutableStateOf(true) }
+    val pv = p.replace(",", ".").toDoubleOrNull()
+    val inCycle = cyc == null || date >= cyc.start
+    Sheet("Add SPayLater", close) {
+        Field(n, { n = it }, "Name")
+        Field(p, { p = it }, "Price RM", KeyboardType.Decimal)
+        SectionLabel("Plan")
+        Chips(listOf("1" to "Next month", "3" to "3 months", "6" to "6 months", "12" to "12 months"), months) { months = it }
+        Field(fee, { fee = it }, "Fee % per month (optional)", KeyboardType.Decimal)
+        DateButton("Purchase date", date) { date = it }
+        Text("First bill is due at the end of that month if bought by the 20th, otherwise the end of next month.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Field(paid, { paid = it.filter { c -> c.isDigit() }.take(2) }, "Instalments already paid", KeyboardType.Number)
+        SectionLabel("Category")
+        Chips(listOf("" to "None") + Store.cats.map { it.name to it.name }, cat) { cat = it }
+        if (inCycle) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Count as spending in this cycle", Modifier.weight(1f)); Switch(count, { count = it })
+        } else Text("Bought before this cycle, so it will not count as spending.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        PrimaryButton("Add SPayLater", n.isNotBlank() && pv != null && pv > 0) {
+            Store.addPlan(n.trim(), pv!!, months.toIntOrNull() ?: 1, fee.replace(",", ".").toDoubleOrNull() ?: 0.0, date, paid.toIntOrNull() ?: 0, cat.ifBlank { "Uncategorized" }, count && inCycle)
+            close()
+        }
     }
 }
