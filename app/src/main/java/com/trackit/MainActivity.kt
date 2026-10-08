@@ -1012,7 +1012,7 @@ fun DebtSheet(old: Debt?, close: () -> Unit) {
     val tv = t.replace(",", ".").toDoubleOrNull()
     val mv = mo.replace(",", ".").toDoubleOrNull() ?: 0.0
     val bv = if (b.isBlank()) tv else b.replace(",", ".").toDoubleOrNull()
-    val bv2 = if (isPlan) tv?.let { (it - (pc.toIntOrNull() ?: 0) * mv).coerceAtLeast(0.0) } else bv
+    val bv2 = if (isPlan) tv?.let { if ((pc.toIntOrNull() ?: 0) >= (old?.months ?: 0)) 0.0 else (it - (pc.toIntOrNull() ?: 0) * mv).coerceAtLeast(0.0) } else bv
     Sheet(if (old == null) "Add debt" else "Edit debt", close) {
         Field(n, { n = it }, "Name")
         Field(t, { t = it }, "Total debt RM", KeyboardType.Decimal)
@@ -1116,7 +1116,13 @@ fun PlanSheet(close: () -> Unit) {
         Chips(listOf("1" to "Next month", "3" to "3 months", "6" to "6 months", "12" to "12 months"), months) { months = it }
         Field(fee, { fee = it }, "Fee % per month (optional)", KeyboardType.Decimal)
         DateButton("Purchase date", date) { date = it }
-        Text("First bill is due at the end of that month if bought by the 20th, otherwise the end of next month.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val mn = months.toIntOrNull() ?: 1
+        if (pv != null && pv > 0) {
+            val tot = Math.round(pv * (1 + (fee.replace(",", ".").toDoubleOrNull() ?: 0.0) / 100.0 * mn) * 100) / 100.0
+            val base = Math.floor(tot / mn * 100) / 100.0
+            Text(if (mn == 1) "Bill: ${rm(tot)}" else "${mn - 1} × ${rm(base)} + last ${rm(tot - base * (mn - 1))} (total ${rm(tot)})", fontWeight = FontWeight.SemiBold)
+        }
+        Text("Bought by the 20th: first bill is due on the 1st of next month. After the 20th: the 1st of the month after.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Field(paid, { paid = it.filter { c -> c.isDigit() }.take(2) }, "Instalments already paid", KeyboardType.Number)
         SectionLabel("Category")
         Chips(listOf("" to "None") + Store.cats.map { it.name to it.name }, cat) { cat = it }

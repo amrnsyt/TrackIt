@@ -237,14 +237,16 @@ object Store {
     }
     fun dueEnd(t: Long): Long {
         val c = Calendar.getInstance().apply { timeInMillis = t; if (get(Calendar.DAY_OF_MONTH) > 20) add(Calendar.MONTH, 1) }
-        c.set(Calendar.DAY_OF_MONTH, c.getActualMaximum(Calendar.DAY_OF_MONTH)); c.set(Calendar.HOUR_OF_DAY, 0); c.set(Calendar.MINUTE, 0); c.set(Calendar.SECOND, 0); c.set(Calendar.MILLISECOND, 0)
+        c.set(Calendar.DAY_OF_MONTH, 1); c.add(Calendar.MONTH, 1)
+        c.set(Calendar.HOUR_OF_DAY, 0); c.set(Calendar.MINUTE, 0); c.set(Calendar.SECOND, 0); c.set(Calendar.MILLISECOND, 0)
         return c.timeInMillis
     }
     fun nextDue(d: Debt): Long {
         if (d.firstDue <= 0 || d.monthly <= 0) return 0L
-        val paid = ((d.total - d.balance) / d.monthly + 0.0001).toInt()
-        val c = Calendar.getInstance().apply { timeInMillis = d.firstDue; set(Calendar.DAY_OF_MONTH, 1); add(Calendar.MONTH, paid) }
-        c.set(Calendar.DAY_OF_MONTH, c.getActualMaximum(Calendar.DAY_OF_MONTH))
+        val paid = ((d.total - d.balance) / d.monthly + 0.0001).toInt().coerceIn(0, maxOf(d.months - 1, 0))
+        val c = Calendar.getInstance().apply { timeInMillis = d.firstDue }
+        if (c.get(Calendar.DAY_OF_MONTH) != 1) { c.set(Calendar.DAY_OF_MONTH, 1); c.add(Calendar.MONTH, 1) }
+        c.add(Calendar.MONTH, paid)
         return c.timeInMillis
     }
     private fun clearPlan(id: String) {
@@ -271,8 +273,9 @@ object Store {
     data class Bill(val month: Long, val total: Double, val parts: List<Pair<Debt, Double>>)
     fun amountDue(d: Debt): Double {
         val paid = d.total - d.balance
-        val k = Math.floor(paid / d.monthly + 0.0001)
-        return minOf(d.balance, (k + 1) * d.monthly - paid).coerceAtLeast(0.0)
+        val k = minOf(maxOf(d.months - 1, 0), Math.floor(paid / d.monthly + 0.0001).toInt())
+        val instal = if (k == d.months - 1) d.total - d.monthly * k else d.monthly
+        return minOf(d.balance, instal - (paid - d.monthly * k)).coerceAtLeast(0.0)
     }
     fun bill(): Bill? {
         val ps = debts.filter { it.months > 0 && it.monthly > 0 && it.balance > 0.005 }
@@ -301,9 +304,9 @@ object Store {
         saveC()
     }
     fun addPlan(name: String, price: Double, months: Int, fee: Double, time: Long, paid: Int, cat: String, count: Boolean) {
-        val total = price * (1 + fee / 100.0 * months)
-        val monthly = total / months
-        val bal = (total - paid.coerceIn(0, months) * monthly).coerceAtLeast(0.0)
+        val total = Math.round(price * (1 + fee / 100.0 * months) * 100) / 100.0
+        val monthly = Math.floor(total / months * 100) / 100.0
+        val bal = if (paid >= months) 0.0 else (total - paid * monthly).coerceAtLeast(0.0)
         val id = "pl" + System.nanoTime()
         debts.add(Debt(id, "SPayLater · $name".take(40), total, bal, monthly, 31, dueEnd(time), months))
         if (count) {
