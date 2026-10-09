@@ -70,6 +70,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         Store.init(this)
+        Reminders.schedule(this)
+        BalanceWidget.refresh(this)
         intent.getStringExtra("txn")?.let { Store.openId.value = it }
         if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -180,6 +182,9 @@ fun App() {
     val rs = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { say(if (runCatching { Store.restore(ctx.contentResolver.openInputStream(it)!!.bufferedReader().readText()) }.isSuccess) "Data restored" else "Not a valid backup file") }
     }
+    val csv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        uri?.let { say(if (runCatching { ctx.contentResolver.openOutputStream(it)!!.use { o -> o.write(Store.exportCsv().toByteArray()) } }.isSuccess) "CSV exported" else "Export failed") }
+    }
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
         val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) { enabled = listenerOn(ctx); Store.rollover() } }
@@ -210,6 +215,10 @@ fun App() {
                         DropdownMenuItem(text = { Text("History") }, leadingIcon = { Icon(Icons.Filled.History, null) }, onClick = { menu = false; go(4) })
                         DropdownMenuItem(text = { Text("Backup data") }, leadingIcon = { Icon(Icons.Filled.Upload, null) }, onClick = { menu = false; bk.launch("TrackIt-backup.json") })
                         DropdownMenuItem(text = { Text("Restore data") }, leadingIcon = { Icon(Icons.Filled.Download, null) }, onClick = { menu = false; rs.launch(arrayOf("*/*")) })
+                        DropdownMenuItem(text = { Text("Export payments (CSV)") }, leadingIcon = { Icon(Icons.Filled.TableChart, null) }, onClick = { menu = false; csv.launch("TrackIt-payments.csv") })
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Due reminders") }, leadingIcon = { Icon(Icons.Filled.Alarm, null) }, trailingIcon = { if (Store.remindOn.value) Icon(Icons.Filled.Check, "On") }, onClick = { Store.setRemind(!Store.remindOn.value) })
+                        DropdownMenuItem(text = { Text("Daily summary") }, leadingIcon = { Icon(Icons.Filled.Notifications, null) }, trailingIcon = { if (Store.summaryOn.value) Icon(Icons.Filled.Check, "On") }, onClick = { Store.setSummary(!Store.summaryOn.value) })
                         HorizontalDivider()
                         listOf(Triple("SYSTEM", "Theme: System", Icons.Filled.SettingsBrightness), Triple("LIGHT", "Theme: Light", Icons.Filled.LightMode), Triple("DARK", "Theme: Dark", Icons.Filled.DarkMode)).forEach { (k, l, ic) ->
                             DropdownMenuItem(text = { Text(l) }, leadingIcon = { Icon(ic, null) }, trailingIcon = { if (Store.theme.value == k) Icon(Icons.Filled.Check, "Selected") }, onClick = { menu = false; Store.setTheme(k) })
@@ -1026,6 +1035,9 @@ fun DebtScreen() {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Total debt remaining", style = MaterialTheme.typography.labelLarge)
                     Text(mk(rm(total)), style = MaterialTheme.typography.displayMedium)
+                    val fin = Store.debts.mapNotNull { Store.payoff(it) }.maxByOrNull { it.second }
+                    val mon = Store.debts.filter { it.balance > 0.005 }.sumOf { it.monthly }
+                    if (fin != null) Text("Debt-free by ${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date(fin.second))} · ${mk(rm(mon))}/month", style = MaterialTheme.typography.titleSmall)
                     if (orig > 0) {
                         BudgetBar(orig - total, orig, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
                         Text("${((orig - total) / orig * 100).toInt()}% paid off of ${mk(rm(orig))}", style = MaterialTheme.typography.labelMedium)
@@ -1049,6 +1061,7 @@ fun DebtScreen() {
                     BudgetBar(d.total - d.balance, d.total, color = MaterialTheme.colorScheme.tertiary)
                     Text("${mk(rm(d.balance))} left of ${mk(rm(d.total))}", style = MaterialTheme.typography.bodyMedium)
                     val nd = Store.nextDue(d)
+                    Store.payoff(d)?.let { Text("About ${it.first} month${if (it.first > 1) "s" else ""} left · done by ${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date(it.second))}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     if (nd > 0 && d.balance > 0.005) Text("Next payment ${rm(d.monthly)} by ${fmtDate(nd)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

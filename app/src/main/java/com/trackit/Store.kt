@@ -43,6 +43,10 @@ object Store {
     val openId = mutableStateOf<String?>(null)
     val theme = mutableStateOf("SYSTEM")
     val hideBal = mutableStateOf(false)
+    val remindOn = mutableStateOf(true)
+    val summaryOn = mutableStateOf(false)
+    fun setRemind(v: Boolean) { remindOn.value = v; sp().edit().putBoolean("remind", v).apply() }
+    fun setSummary(v: Boolean) { summaryOn.value = v; sp().edit().putBoolean("summary", v).apply() }
     var lastPing: String? = null
     fun setHide(v: Boolean) { hideBal.value = v; sp().edit().putBoolean("hide", v).apply() }
     private fun cancelPing() { ctx.getSystemService(NotificationManager::class.java).cancel(1001); lastPing = null }
@@ -53,6 +57,8 @@ object Store {
         ctx = c.applicationContext
         theme.value = sp().getString("theme", "SYSTEM") ?: "SYSTEM"
         hideBal.value = sp().getBoolean("hide", false)
+        remindOn.value = sp().getBoolean("remind", true)
+        summaryOn.value = sp().getBoolean("summary", false)
         load()
         ready = true
         rollover()
@@ -131,6 +137,7 @@ object Store {
         val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income).put("k", it.counted).put("l", it.later).put("pl", it.planId).put("sp", it.split).put("bp", it.billPay)) } }
         val h = JSONArray().also { a -> snaps.forEach { a.put(JSONObject().put("i", it.id).put("c", it.category).put("s", it.start).put("e", it.end).put("b", it.budget).put("a", it.spent)) } }
         sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString()).apply()
+        refreshWidget()
     }
 
     fun startOf(c: Category, now: Long = System.currentTimeMillis()): Long {
@@ -182,6 +189,29 @@ object Store {
         if (changed) save()
     }
 
+    private fun refreshWidget() { try { BalanceWidget.refresh(ctx) } catch (_: Exception) { } }
+    fun exportCsv(): String {
+        fun q(x: String) = "\"" + x.replace("\"", "\"\"") + "\""
+        val f = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+        val sb = StringBuilder("Date,Merchant,Amount,Type,Category,Notes\n")
+        txns.sortedBy { it.time }.forEach { t ->
+            val notes = listOfNotNull(if (t.later) "SPayLater" else null, if (t.billPay) "SPayLater bill payment" else null,
+                if (t.split.isNotBlank()) "Split: " + parts(t).joinToString("; ") { String.format(java.util.Locale.US, "%s %.2f", it.first, it.second) } else null).joinToString(" | ")
+            sb.append(f.format(java.util.Date(t.time))).append(',').append(q(t.merchant)).append(',').append(String.format(java.util.Locale.US, "%.2f", t.amount)).append(',')
+                .append(if (t.income) "Income" else "Expense").append(',').append(q(t.category)).append(',').append(q(notes)).append('\n')
+        }
+        return sb.toString()
+    }
+    fun payoff(d: Debt): Pair<Int, Long>? {
+        if (d.monthly <= 0 || d.balance <= 0.005) return null
+        val n = Math.ceil(d.balance / d.monthly - 0.0001).toInt().coerceAtLeast(1)
+        val c = Calendar.getInstance()
+        if (d.months > 0) { val nd = nextDue(d); if (nd > 0) c.timeInMillis = nd }
+        else if (d.due > 0) { c.set(Calendar.DAY_OF_MONTH, minOf(d.due, 28)); if (c.timeInMillis < System.currentTimeMillis()) c.add(Calendar.MONTH, 1) }
+        else c.add(Calendar.MONTH, 1)
+        c.add(Calendar.MONTH, n - 1)
+        return n to c.timeInMillis
+    }
     private fun saveC() {
         val t = JSONArray().also { a -> tpls.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due).put("g", it.catName).put("b", it.debtId)) } }
         val m = JSONArray().also { a -> items.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due).put("p", it.paid).put("t", it.txnId).put("g", it.catName).put("b", it.debtId)) } }
@@ -190,6 +220,7 @@ object Store {
         val dj = JSONArray().also { a -> debts.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("t", it.total).put("b", it.balance).put("m", it.monthly).put("d", it.due).put("f", it.firstDue).put("k", it.months)) } }
         val lj = JSONArray().also { a -> dlogs.forEach { a.put(JSONObject().put("d", it.debtId).put("i", it.itemId).put("t", it.time).put("a", it.amount)) } }
         sp().edit().putString("debts", dj.toString()).putString("dlogs", lj.toString()).putString("tpl", t.toString()).putString("items", m.toString()).putString("csnaps", h.toString()).putString("cyc", c).apply()
+        refreshWidget()
     }
     fun cycleSpent(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && !it.later && it.time >= c.start }.sumOf { it.amount } }
     fun cycleBought(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && !it.billPay && it.time >= c.start }.sumOf { it.amount } }
