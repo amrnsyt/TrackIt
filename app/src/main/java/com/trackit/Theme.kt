@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -120,13 +121,13 @@ fun EmptyState(icon: ImageVector, title: String, sub: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun Sheet(title: String, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun Sheet(title: String, onClose: () -> Unit, full: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
         Column(
-            Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp).navigationBarsPadding().imePadding(),
+            (if (full) Modifier.height((LocalConfiguration.current.screenHeightDp * 0.9f).dp) else Modifier).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp).navigationBarsPadding().imePadding(),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(title, style = MaterialTheme.typography.headlineSmall)

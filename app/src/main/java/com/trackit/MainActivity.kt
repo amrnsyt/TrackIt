@@ -354,7 +354,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                SectionLabel(if (sel == null) "Recent activity" else dayLabel(sel!!))
+                SectionLabel(if (sel == null) "Recent activity" else dayLabel(sel!!) + " · " + rm(list0.filter { !it.income }.sumOf { it.amount }))
                 TextButton({ showAll = true }) { Icon(Icons.Filled.Search, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Search & see all") }
             }
         }
@@ -363,7 +363,12 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
                 if (sel == null) "Pay with QR or Paywave and it appears here automatically, or tap + to add one." else "Tap the selected day again to see everything.")
         }
         groups.forEach { (day, list) ->
-            if (sel == null) item(key = "h$day") { SectionLabel(day) }
+            if (sel == null) item(key = "h$day") {
+                Row(Modifier.fillMaxWidth().padding(end = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                    SectionLabel(day)
+                    Text(rm(list.filter { !it.income }.sumOf { it.amount }), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             items(list, key = { it.id }) { t ->
                 Box(Modifier.enter(list.indexOf(t)).animateItem().clip(MaterialTheme.shapes.large)) { TxnRow(t) { pick = t } }
             }
@@ -600,7 +605,7 @@ fun AllPaymentsSheet(onClose: () -> Unit, onPick: (Txn) -> Unit) {
     val s = cal.timeInMillis
     val e = (cal.clone() as Calendar).apply { add(Calendar.MONTH, 1) }.timeInMillis
     val list = Store.txns.filter { it.time in s until e && (cat == "All" || it.category == cat) && (q.isBlank() || it.merchant.contains(q.trim(), true)) }
-    Sheet("All payments", onClose) {
+    Sheet("All payments", onClose, true) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             IconButton({ off++ }) { Icon(Icons.Filled.ChevronLeft, "Previous month") }
             Text(SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(s)), style = MaterialTheme.typography.titleMedium)
