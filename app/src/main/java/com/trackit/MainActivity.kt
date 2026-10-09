@@ -34,6 +34,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -53,6 +54,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -550,22 +552,63 @@ fun AddTxnSheet(close: () -> Unit) {
 }
 
 @Composable
+fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.large) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            content()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
 fun CatSheet(edit: Category?, close: () -> Unit) {
     var n by remember { mutableStateOf(edit?.name ?: "") }
-    var k by remember { mutableStateOf(edit?.keywords ?: "") }
+    val kws = remember { mutableStateListOf<String>().apply { addAll((edit?.keywords ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }) } }
+    var kin by remember { mutableStateOf("") }
     var b by remember { mutableStateOf(edit?.budget?.takeIf { it > 0 }?.let { "%.2f".format(it) } ?: "") }
     var p by remember { mutableStateOf(edit?.period ?: "MONTHLY") }
     var d by remember { mutableStateOf((edit?.startDay ?: 1).toString()) }
     val dup = Store.cats.any { it.name.equals(n.trim(), true) && it.name != edit?.name }
-    Sheet(if (edit == null) "New category" else "Edit category", close) {
-        Field(n, { n = it }, "Name", err = if (dup) "Name already used" else null)
-        Field(k, { k = it }, "Keywords (comma separated)")
-        Field(b, { b = it }, "Budget RM (optional)", KeyboardType.Decimal)
-        SectionLabel("Budget resets")
-        Chips(listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MONTHLY" to "Monthly", "YEARLY" to "Yearly", "CYCLE" to "Salary cycle"), p) { p = it }
-        AnimatedVisibility(p == "MONTHLY") { Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Reset on day of month (1-28)", KeyboardType.Number) }
+    fun addKw() {
+        kin.split(",").map { it.trim() }.filter { w -> w.isNotEmpty() && kws.none { it.equals(w, true) } }.forEach { kws.add(it) }
+        kin = ""
+    }
+    Sheet(if (edit == null) "New category" else "Edit category", close, true) {
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(Modifier.padding(top = 8.dp)) { CatAvatar(n.ifBlank { "?" }, 52.dp) }
+            OutlinedTextField(n, { n = it }, Modifier.weight(1f), label = { Text("Name") }, singleLine = true, isError = dup,
+                supportingText = { if (dup) Text("Name already used") }, shape = MaterialTheme.shapes.medium)
+        }
+        Group("Keywords") {
+            Text("Payments from a merchant containing a keyword go into this category.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (kws.isEmpty()) Text("No keywords yet", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                kws.toList().forEach { k ->
+                    InputChip(selected = false, onClick = { kws.remove(k) }, label = { Text(k) },
+                        trailingIcon = { Icon(Icons.Filled.Close, "Remove $k", Modifier.size(16.dp)) })
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(kin, { kin = it }, Modifier.weight(1f), label = { Text("Add keyword") }, singleLine = true, shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { addKw() }))
+                FilledTonalIconButton({ addKw() }, enabled = kin.isNotBlank()) { Icon(Icons.Filled.Add, "Add keyword") }
+            }
+        }
+        Group("Budget") {
+            Field(b, { b = it }, "Budget RM (optional)", KeyboardType.Decimal)
+            Text("Resets", style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MONTHLY" to "Monthly", "YEARLY" to "Yearly", "CYCLE" to "Salary cycle").forEach { (k, l) ->
+                    FilterChip(selected = p == k, onClick = { p = k }, label = { Text(l) })
+                }
+            }
+            AnimatedVisibility(p == "MONTHLY") { Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Reset on day of month (1-28)", KeyboardType.Number) }
+        }
         PrimaryButton("Save category", n.isNotBlank() && !dup) {
-            val nc = Category(n.trim(), k.trim(), b.replace(",", ".").toDoubleOrNull() ?: 0.0, p, d.toIntOrNull()?.coerceIn(1, 28) ?: 1, edit?.periodStart ?: 0L)
+            if (kin.isNotBlank()) addKw()
+            val nc = Category(n.trim(), kws.joinToString(","), b.replace(",", ".").toDoubleOrNull() ?: 0.0, p, d.toIntOrNull()?.coerceIn(1, 28) ?: 1, edit?.periodStart ?: 0L)
             if (edit == null) Store.addCat(nc) else Store.editCat(edit, nc)
             close()
         }

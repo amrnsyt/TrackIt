@@ -127,7 +127,7 @@ fun Sheet(title: String, onClose: () -> Unit, full: Boolean = false, content: @C
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
         Column(
-            (if (full) Modifier.height((LocalConfiguration.current.screenHeightDp * 0.9f).dp) else Modifier).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp).navigationBarsPadding().imePadding(),
+            (if (full) Modifier.height((LocalConfiguration.current.screenHeightDp * 0.8f).dp) else Modifier).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp).navigationBarsPadding().imePadding(),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(title, style = MaterialTheme.typography.headlineSmall)
