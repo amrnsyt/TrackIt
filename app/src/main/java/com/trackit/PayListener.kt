@@ -21,6 +21,9 @@ class PayListener : NotificationListenerService() {
         val title = e.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val body = (e.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: e.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty()
         val all = "$title $body"
+        val low = all.lowercase()
+        if (low.contains("invoice")) return
+        if (sbn.packageName == "com.google.android.gm" && !(low.contains("maybank") || Regex("\\bmae\\b").containsMatchIn(low))) return
         val m = amt.find(all) ?: return
         if (hint.none { all.lowercase().contains(it) }) return
         val v = m.groupValues[1].replace(",", "").toDoubleOrNull() ?: return
