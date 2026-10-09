@@ -44,9 +44,7 @@ object Store {
     val theme = mutableStateOf("SYSTEM")
     val hideBal = mutableStateOf(false)
     val remindOn = mutableStateOf(true)
-    val summaryOn = mutableStateOf(false)
     fun setRemind(v: Boolean) { remindOn.value = v; sp().edit().putBoolean("remind", v).apply() }
-    fun setSummary(v: Boolean) { summaryOn.value = v; sp().edit().putBoolean("summary", v).apply() }
     var lastPing: String? = null
     fun setHide(v: Boolean) { hideBal.value = v; sp().edit().putBoolean("hide", v).apply() }
     private fun cancelPing() { ctx.getSystemService(NotificationManager::class.java).cancel(1001); lastPing = null }
@@ -58,7 +56,6 @@ object Store {
         theme.value = sp().getString("theme", "SYSTEM") ?: "SYSTEM"
         hideBal.value = sp().getBoolean("hide", false)
         remindOn.value = sp().getBoolean("remind", true)
-        summaryOn.value = sp().getBoolean("summary", false)
         load()
         ready = true
         rollover()

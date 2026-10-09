@@ -116,7 +116,7 @@ fun dayLabel(t: Long): String {
 
 fun greeting(): String {
     val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-    return if (h < 12) "Good morning" else if (h < 18) "Good afternoon" else "Good evening"
+    return if (h in 5..11) "Good morning" else if (h in 12..17) "Good afternoon" else if (h in 18..20) "Good evening" else "Good night"
 }
 fun weekDays(): List<Long> {
     val c = Calendar.getInstance().apply {
@@ -218,7 +218,6 @@ fun App() {
                         DropdownMenuItem(text = { Text("Export payments (CSV)") }, leadingIcon = { Icon(Icons.Filled.TableChart, null) }, onClick = { menu = false; csv.launch("TrackIt-payments.csv") })
                         HorizontalDivider()
                         DropdownMenuItem(text = { Text("Due reminders") }, leadingIcon = { Icon(Icons.Filled.Alarm, null) }, trailingIcon = { if (Store.remindOn.value) Icon(Icons.Filled.Check, "On") }, onClick = { Store.setRemind(!Store.remindOn.value) })
-                        DropdownMenuItem(text = { Text("Daily summary") }, leadingIcon = { Icon(Icons.Filled.Notifications, null) }, trailingIcon = { if (Store.summaryOn.value) Icon(Icons.Filled.Check, "On") }, onClick = { Store.setSummary(!Store.summaryOn.value) })
                         HorizontalDivider()
                         listOf(Triple("SYSTEM", "Theme: System", Icons.Filled.SettingsBrightness), Triple("LIGHT", "Theme: Light", Icons.Filled.LightMode), Triple("DARK", "Theme: Dark", Icons.Filled.DarkMode)).forEach { (k, l, ic) ->
                             DropdownMenuItem(text = { Text(l) }, leadingIcon = { Icon(ic, null) }, trailingIcon = { if (Store.theme.value == k) Icon(Icons.Filled.Check, "Selected") }, onClick = { menu = false; Store.setTheme(k) })
