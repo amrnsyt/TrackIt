@@ -35,15 +35,6 @@ object Reminders {
             Store.bill()?.let { b -> if (b.month - todayStart() in 0..(2 * 86400000L)) lines.add("SPayLater bill · ${rm(b.total)}") }
             if (lines.isNotEmpty()) post(2002, "Due soon", lines.joinToString("\n"))
         }
-        val cyc = Store.cycle.value
-        if (Store.summaryOn.value && cyc != null) {
-            if (Store.hideBal.value) post(2003, "Today's budget", "Open Track It! to see your safe-to-spend amount.")
-            else {
-                val safe = Store.cycleLeft()
-                val dl = cyc.takeIf { it.next > System.currentTimeMillis() }?.let { Math.ceil((it.next - System.currentTimeMillis()) / 86400000.0).toInt().coerceAtLeast(1) }
-                post(2003, "Today's budget", "Safe to spend ${rm(safe)}" + (if (dl != null && safe > 0) " · about ${rm(safe / dl)} per day for $dl days" else ""))
-            }
-        }
     }
 }
 

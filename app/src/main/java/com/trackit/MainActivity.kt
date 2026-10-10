@@ -166,6 +166,7 @@ fun App() {
     var enabled by remember { mutableStateOf(listenerOn(ctx)) }
     var menu by remember { mutableStateOf(false) }
     var addT by remember { mutableStateOf(false) }
+    var filters by remember { mutableStateOf(false) }
     var catSheet by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Category?>(null) }
     fun say(m: String) { scope.launch { snack.showSnackbar(m) } }
@@ -216,6 +217,7 @@ fun App() {
                         DropdownMenuItem(text = { Text("Backup data") }, leadingIcon = { Icon(Icons.Filled.Upload, null) }, onClick = { menu = false; bk.launch("TrackIt-backup.json") })
                         DropdownMenuItem(text = { Text("Restore data") }, leadingIcon = { Icon(Icons.Filled.Download, null) }, onClick = { menu = false; rs.launch(arrayOf("*/*")) })
                         DropdownMenuItem(text = { Text("Export payments (CSV)") }, leadingIcon = { Icon(Icons.Filled.TableChart, null) }, onClick = { menu = false; csv.launch("TrackIt-payments.csv") })
+                        DropdownMenuItem(text = { Text("Notification filters") }, leadingIcon = { Icon(Icons.Filled.FilterList, null) }, onClick = { menu = false; filters = true })
                         HorizontalDivider()
                         DropdownMenuItem(text = { Text("Due reminders") }, leadingIcon = { Icon(Icons.Filled.Alarm, null) }, trailingIcon = { if (Store.remindOn.value) Icon(Icons.Filled.Check, "On") }, onClick = { Store.setRemind(!Store.remindOn.value) })
                         HorizontalDivider()
@@ -269,6 +271,7 @@ fun App() {
         }
     }
     if (addT) AddTxnSheet { addT = false }
+    if (filters) FiltersSheet { filters = false }
     if (catSheet) CatSheet(editing) { catSheet = false }
     Store.openId.value?.let { id ->
         val t = Store.txns.find { it.id == id }
@@ -474,7 +477,7 @@ fun History() {
 
 @Composable
 fun Field(v: String, onChange: (String) -> Unit, label: String, kb: KeyboardType = KeyboardType.Text, err: String? = null) =
-    OutlinedTextField(v, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = kb != KeyboardType.Text || label == "Name" || label == "Merchant" || label.startsWith("Merchant") || label.startsWith("Carry"),
+    OutlinedTextField(v, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = kb != KeyboardType.Text || label == "Name" || label == "Merchant" || label.startsWith("Merchant") || label.startsWith("Carry") || label == "Keyword",
         isError = err != null, supportingText = { if (err != null) Text(err) }, shape = MaterialTheme.shapes.medium, keyboardOptions = KeyboardOptions(keyboardType = kb))
 
 @Composable
@@ -1274,5 +1277,49 @@ fun SplitSheet(t: Txn, close: () -> Unit) {
         }
         PrimaryButton("Save split", ok) { Store.setSplit(t, rows.map { it.first to it.second.replace(",", ".").toDouble() }); close() }
         if (t.split.isNotBlank()) TextButton({ Store.setSplit(t, emptyList()); close() }, Modifier.fillMaxWidth()) { Text("Remove split", color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun FiltersSheet(close: () -> Unit) {
+    var mode by remember { mutableStateOf("IGNORE") }
+    var app by remember { mutableStateOf("") }
+    var kw by remember { mutableStateOf("") }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Sheet("Notification filters", close, true) {
+        Text("Control which payment notifications are recorded.", color = muted)
+        Group("Rules") {
+            if (Store.rules.isEmpty()) Text("No rules yet", color = muted)
+            Store.rules.toList().forEach { r ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("\"${r.keyword}\"", fontWeight = FontWeight.SemiBold)
+                        Text((if (r.mode == "IGNORE") "Ignore" else "Only record if matched") + " · " + (if (r.pkg.isBlank()) "All apps" else Store.appLabel(r.pkg)), style = MaterialTheme.typography.bodySmall, color = muted)
+                    }
+                    IconButton({ Store.delRule(r) }) { Icon(Icons.Filled.Delete, "Delete rule") }
+                }
+            }
+        }
+        Group("Add rule") {
+            Chips(listOf("IGNORE" to "Ignore", "ONLY" to "Only record if"), mode) { mode = it }
+            Text(if (mode == "IGNORE") "Notifications containing this word are not recorded." else "From the chosen app, only notifications containing this word are recorded.", style = MaterialTheme.typography.bodySmall, color = muted)
+            Text("App", style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                FilterChip(selected = app == "", onClick = { app = "" }, label = { Text("All apps") })
+                Store.seen.take(14).forEach { p -> FilterChip(selected = app == p, onClick = { app = p }, label = { Text(Store.appLabel(p)) }) }
+            }
+            Field(kw, { kw = it }, "Keyword")
+            PrimaryButton("Add rule", kw.isNotBlank() && (mode == "IGNORE" || app.isNotBlank())) { Store.addRule(Rule("r${System.nanoTime()}", app, kw.trim(), mode)); kw = "" }
+        }
+        Group("Recently ignored") {
+            if (Store.ignored.isEmpty()) Text("Nothing ignored yet", color = muted)
+            Store.ignored.take(10).forEach { g ->
+                Column {
+                    Text(Store.appLabel(g.pkg) + " · " + SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()).format(Date(g.time)), style = MaterialTheme.typography.labelSmall, color = muted)
+                    Text(g.text.take(90), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
     }
 }

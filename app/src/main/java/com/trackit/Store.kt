@@ -23,6 +23,8 @@ data class DebtLog(val debtId: String, val itemId: String, val time: Long, val a
 data class Item(val id: String, val name: String, val amount: Double, val due: Int, val paid: Boolean = false, val txnId: String = "", val catName: String = "", val debtId: String = "")
 data class Cycle(val start: Long, val salary: Double, val next: Long = 0L, val carry: Double = 0.0)
 data class CSnap(val id: String, val start: Long, val end: Long, val salary: Double, val committed: Double, val spent: Double, val income: Double = 0.0, val carryIn: Double = 0.0, val carryOut: Double = 0.0)
+data class Rule(val id: String, val pkg: String, val keyword: String, val mode: String)
+data class Ign(val time: Long, val pkg: String, val text: String)
 data class Snap(val id: String, val category: String, val start: Long, val end: Long, val budget: Double, val spent: Double)
 
 object Store {
@@ -43,6 +45,9 @@ object Store {
     val openId = mutableStateOf<String?>(null)
     val theme = mutableStateOf("SYSTEM")
     val hideBal = mutableStateOf(false)
+    val rules = mutableStateListOf<Rule>()
+    val ignored = mutableStateListOf<Ign>()
+    val seen = mutableStateListOf<String>()
     val remindOn = mutableStateOf(true)
     fun setRemind(v: Boolean) { remindOn.value = v; sp().edit().putBoolean("remind", v).apply() }
     var lastPing: String? = null
@@ -55,6 +60,7 @@ object Store {
         ctx = c.applicationContext
         theme.value = sp().getString("theme", "SYSTEM") ?: "SYSTEM"
         hideBal.value = sp().getBoolean("hide", false)
+        loadRules()
         remindOn.value = sp().getBoolean("remind", true)
         load()
         ready = true
@@ -117,7 +123,7 @@ object Store {
         return JSONObject().put("app", "TrackIt").put("cats", JSONArray(s.getString("cats", "[]")))
             .put("txns", JSONArray(s.getString("txns", "[]"))).put("snaps", JSONArray(s.getString("snaps", "[]")))
             .put("tpl", JSONArray(s.getString("tpl", "[]"))).put("items", JSONArray(s.getString("items", "[]")))
-            .put("csnaps", JSONArray(s.getString("csnaps", "[]"))).put("cyc", s.getString("cyc", "")).put("debts", JSONArray(s.getString("debts", "[]"))).put("dlogs", JSONArray(s.getString("dlogs", "[]"))).put("mem", JSONObject(s.getString("mem", "{}"))).toString()
+            .put("csnaps", JSONArray(s.getString("csnaps", "[]"))).put("cyc", s.getString("cyc", "")).put("debts", JSONArray(s.getString("debts", "[]"))).put("dlogs", JSONArray(s.getString("dlogs", "[]"))).put("mem", JSONObject(s.getString("mem", "{}"))).put("rules", JSONArray(s.getString("rules", "[]"))).toString()
     }
 
     fun restore(json: String) {
@@ -125,8 +131,8 @@ object Store {
         val c = o.getJSONArray("cats"); val t = o.getJSONArray("txns"); val h = o.optJSONArray("snaps") ?: JSONArray()
         sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString())
             .putString("tpl", (o.optJSONArray("tpl") ?: JSONArray()).toString()).putString("items", (o.optJSONArray("items") ?: JSONArray()).toString())
-            .putString("csnaps", (o.optJSONArray("csnaps") ?: JSONArray()).toString()).putString("cyc", o.optString("cyc", "")).putString("debts", (o.optJSONArray("debts") ?: JSONArray()).toString()).putString("dlogs", (o.optJSONArray("dlogs") ?: JSONArray()).toString()).putString("mem", (o.optJSONObject("mem") ?: JSONObject()).toString()).apply()
-        load(); rollover()
+            .putString("csnaps", (o.optJSONArray("csnaps") ?: JSONArray()).toString()).putString("cyc", o.optString("cyc", "")).putString("debts", (o.optJSONArray("debts") ?: JSONArray()).toString()).putString("dlogs", (o.optJSONArray("dlogs") ?: JSONArray()).toString()).putString("mem", (o.optJSONObject("mem") ?: JSONObject()).toString()).putString("rules", (o.optJSONArray("rules") ?: JSONArray(sp().getString("rules", "[]"))).toString()).apply()
+        load(); rollover(); loadRules()
     }
 
     private fun save() {
@@ -186,6 +192,35 @@ object Store {
         if (changed) save()
     }
 
+    private fun loadRules() {
+        rules.clear(); ignored.clear(); seen.clear()
+        val s = sp()
+        if (!s.contains("rules")) {
+            rules.addAll(listOf(Rule("r1", "", "invoice", "IGNORE"), Rule("r2", "com.google.android.gm", "maybank", "ONLY"), Rule("r3", "com.google.android.gm", "mae", "ONLY")))
+            saveRules()
+        } else JSONArray(s.getString("rules", "[]")).let { a ->
+            for (i in 0 until a.length()) a.getJSONObject(i).let { rules.add(Rule(it.getString("i"), it.getString("p"), it.getString("k"), it.getString("m"))) }
+        }
+        JSONArray(s.getString("ign", "[]")).let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { ignored.add(Ign(it.getLong("t"), it.getString("p"), it.getString("x"))) } }
+        JSONArray(s.getString("seen", "[]")).let { a -> for (i in 0 until a.length()) seen.add(a.getString(i)) }
+    }
+    private fun saveRules() {
+        val r = JSONArray().also { a -> rules.forEach { a.put(JSONObject().put("i", it.id).put("p", it.pkg).put("k", it.keyword).put("m", it.mode)) } }
+        val g = JSONArray().also { a -> ignored.forEach { a.put(JSONObject().put("t", it.time).put("p", it.pkg).put("x", it.text)) } }
+        val n = JSONArray().also { a -> seen.forEach { a.put(it) } }
+        sp().edit().putString("rules", r.toString()).putString("ign", g.toString()).putString("seen", n.toString()).apply()
+    }
+    fun addRule(r: Rule) { rules.add(r); saveRules() }
+    fun delRule(r: Rule) { rules.remove(r); saveRules() }
+    fun noteSeen(pkg: String) { if (pkg in seen) return; seen.add(0, pkg); while (seen.size > 40) seen.removeAt(seen.lastIndex); saveRules() }
+    fun logIgnored(pkg: String, text: String) { ignored.add(0, Ign(System.currentTimeMillis(), pkg, text)); while (ignored.size > 20) ignored.removeAt(ignored.lastIndex); saveRules() }
+    private fun matches(kw: String, text: String) = kw.isNotBlank() && Regex("\\b" + Regex.escape(kw.trim()), RegexOption.IGNORE_CASE).containsMatchIn(text)
+    fun allowed(pkg: String, text: String): Boolean {
+        if (rules.any { it.mode == "IGNORE" && (it.pkg.isBlank() || it.pkg == pkg) && matches(it.keyword, text) }) return false
+        val only = rules.filter { it.mode == "ONLY" && it.pkg == pkg }
+        return only.isEmpty() || only.any { matches(it.keyword, text) }
+    }
+    fun appLabel(pkg: String): String = try { val pm = ctx.packageManager; pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (e: Exception) { pkg }
     private fun refreshWidget() { try { BalanceWidget.refresh(ctx) } catch (_: Exception) { } }
     fun exportCsv(): String {
         fun q(x: String) = "\"" + x.replace("\"", "\"\"") + "\""
