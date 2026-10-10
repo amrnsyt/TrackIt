@@ -629,22 +629,30 @@ fun CatSheet(edit: Category?, close: () -> Unit) {
 
 @Composable
 fun TxnRow(t: Txn, onClick: () -> Unit) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val check = !t.income && !t.billPay && t.category != "Uncategorized" && Store.uncertain(t.merchant)
+    val date = SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()).format(Date(t.time))
+    val sub = when {
+        t.billPay -> "SPayLater bill · $date"
+        t.category == "Uncategorized" -> "Tap to categorize · $date"
+        else -> "${t.category} · $date"
+    }
     Surface(onClick = onClick, color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.large) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             CatAvatar(t.category)
             Column(Modifier.weight(1f)) {
-                Text(t.merchant, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (t.billPay) Pill("SPayLater bill", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
-                    else if (t.category == "Uncategorized") Pill("Categorize", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-                    else Text(t.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (t.split.isNotBlank()) Pill("Split", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
-                    if (!t.income && t.category != "Uncategorized" && Store.uncertain(t.merchant)) Pill("Check category", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-                    if (t.later) Pill("SPayLater", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
-                    Text("· " + SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()).format(Date(t.time)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(t.merchant, Modifier.weight(1f, fill = false), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (t.split.isNotBlank()) Icon(Icons.Filled.CallSplit, "Split", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                    if (check) Icon(Icons.Filled.Warning, "Check category", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.error)
+                    if (t.later) Icon(Icons.Filled.CreditCard, "SPayLater", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                    if (t.billPay) Icon(Icons.Filled.Payments, "SPayLater bill", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.secondary)
                 }
+                Text(sub, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = if (t.category == "Uncategorized" && !t.billPay && !t.income) MaterialTheme.colorScheme.tertiary else muted,
+                    fontWeight = if (t.category == "Uncategorized" && !t.billPay && !t.income) FontWeight.SemiBold else FontWeight.Normal)
             }
-            Text((if (t.income) "+" else "") + rm(t.amount), style = MaterialTheme.typography.titleMedium,
+            Text((if (t.income) "+" else "") + rm(t.amount), style = MaterialTheme.typography.titleMedium, maxLines = 1,
                 color = if (t.income) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface)
         }
     }

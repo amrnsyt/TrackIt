@@ -136,9 +136,10 @@ fun Sheet(title: String, onClose: () -> Unit, full: Boolean = false, content: @C
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun Chips(options: List<Pair<String, String>>, selected: String, onSel: (String) -> Unit) {
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         options.forEach { (k, l) -> FilterChip(selected = selected == k, onClick = { onSel(k) }, label = { Text(l) }) }
     }
 }
