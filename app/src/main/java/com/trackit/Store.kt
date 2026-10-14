@@ -16,7 +16,7 @@ data class Category(
     val name: String, val keywords: String, val budget: Double = 0.0,
     val period: String = "MONTHLY", val startDay: Int = 1, val periodStart: Long = 0L
 )
-data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false, val counted: Boolean = true, val later: Boolean = false, val planId: String = "", val split: String = "", val billPay: Boolean = false)
+data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false, val counted: Boolean = true, val later: Boolean = false, val planId: String = "", val split: String = "", val billPay: Boolean = false, val note: String = "")
 data class Tpl(val id: String, val name: String, val amount: Double, val due: Int, val catName: String = "", val debtId: String = "")
 data class Debt(val id: String, val name: String, val total: Double, val balance: Double, val monthly: Double, val due: Int, val firstDue: Long = 0L, val months: Int = 0)
 data class DebtLog(val debtId: String, val itemId: String, val time: Long, val amount: Double)
@@ -83,7 +83,7 @@ object Store {
             Category("Bills", "tnb,unifi,maxis,celcom,digi,water")))
         JSONArray(s.getString("txns", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let {
-                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false), it.optBoolean("k", true), it.optBoolean("l", false), it.optString("pl", ""), it.optString("sp", ""), it.optBoolean("bp", false)))
+                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false), it.optBoolean("k", true), it.optBoolean("l", false), it.optString("pl", ""), it.optString("sp", ""), it.optBoolean("bp", false), it.optString("nt", "")))
             }
         }
         JSONArray(s.getString("snaps", "[]")).let { a ->
@@ -137,7 +137,7 @@ object Store {
 
     private fun save() {
         val c = JSONArray().also { a -> cats.forEach { a.put(JSONObject().put("n", it.name).put("k", it.keywords).put("b", it.budget).put("p", it.period).put("d", it.startDay).put("s", it.periodStart)) } }
-        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income).put("k", it.counted).put("l", it.later).put("pl", it.planId).put("sp", it.split).put("bp", it.billPay)) } }
+        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income).put("k", it.counted).put("l", it.later).put("pl", it.planId).put("sp", it.split).put("bp", it.billPay).put("nt", it.note)) } }
         val h = JSONArray().also { a -> snaps.forEach { a.put(JSONObject().put("i", it.id).put("c", it.category).put("s", it.start).put("e", it.end).put("b", it.budget).put("a", it.spent)) } }
         sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString()).apply()
         refreshWidget()
@@ -225,12 +225,12 @@ object Store {
     fun exportCsv(): String {
         fun q(x: String) = "\"" + x.replace("\"", "\"\"") + "\""
         val f = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
-        val sb = StringBuilder("Date,Merchant,Amount,Type,Category,Notes\n")
+        val sb = StringBuilder("Date,Merchant,Amount,Type,Category,Notes,Note\n")
         txns.sortedBy { it.time }.forEach { t ->
             val notes = listOfNotNull(if (t.later) "SPayLater" else null, if (t.billPay) "SPayLater bill payment" else null,
                 if (t.split.isNotBlank()) "Split: " + parts(t).joinToString("; ") { String.format(java.util.Locale.US, "%s %.2f", it.first, it.second) } else null).joinToString(" | ")
             sb.append(f.format(java.util.Date(t.time))).append(',').append(q(t.merchant)).append(',').append(String.format(java.util.Locale.US, "%.2f", t.amount)).append(',')
-                .append(if (t.income) "Income" else "Expense").append(',').append(q(t.category)).append(',').append(q(notes)).append('\n')
+                .append(if (t.income) "Income" else "Expense").append(',').append(q(t.category)).append(',').append(q(notes)).append(',').append(q(t.note)).append('\n')
         }
         return sb.toString()
     }
@@ -475,7 +475,7 @@ object Store {
         if (i >= 0) {
             val old = txns[i]
             if (t.id.startsWith(WALLET) && !old.id.startsWith(WALLET)) {
-                txns[i] = t.copy(id = old.id, category = if (t.category == "Uncategorized") old.category else t.category)
+                txns[i] = t.copy(id = old.id, category = if (t.category == "Uncategorized") old.category else t.category, note = old.note)
                 save(); alert(txns[i].category)
             }
             return null

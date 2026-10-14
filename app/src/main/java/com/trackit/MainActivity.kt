@@ -487,6 +487,7 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
     var cat by remember(t.id) { mutableStateOf(t.category) }
     var inc by remember(t.id) { mutableStateOf(t.income) }
     var cnt by remember(t.id) { mutableStateOf(t.counted) }
+    var memo by remember(t.id) { mutableStateOf(t.note) }
     var splitOpen by remember(t.id) { mutableStateOf(false) }
     var later by remember(t.id) { mutableStateOf(t.later) }
     var months by remember(t.id) { mutableStateOf("1") }
@@ -496,6 +497,7 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
     Sheet("Edit payment", close) {
         Field(amt, { amt = it }, "Amount RM", KeyboardType.Decimal, if (v == null || v <= 0) "Enter a valid amount" else null)
         Field(mer, { mer = it }, "Merchant")
+        NoteField(memo) { memo = it }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("This is income (not counted as spending)", Modifier.weight(1f))
             Switch(inc, { inc = it })
@@ -514,7 +516,7 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
         }
         if (t.later) Text("SPayLater purchase. Manage or delete the plan in the Debt tab.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         PrimaryButton("Save changes", v != null && v > 0) {
-            val u = t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc, counted = cnt, split = if (cat != t.category || Math.abs(v!! - t.amount) > 0.004) "" else t.split)
+            val u = t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc, counted = cnt, split = if (cat != t.category || Math.abs(v!! - t.amount) > 0.004) "" else t.split, note = memo.trim())
             Store.updateTxn(t, u)
             close()
         }
@@ -535,15 +537,17 @@ fun AddTxnSheet(close: () -> Unit) {
     var months by remember { mutableStateOf("1") }
     var fee by remember { mutableStateOf("") }
     var paidN by remember { mutableStateOf("0") }
+    var memo by remember { mutableStateOf("") }
     val v = amt.replace(",", ".").toDoubleOrNull()
     Sheet("Add payment", close) {
         Field(amt, { amt = it }, "Amount RM", KeyboardType.Decimal)
-        Field(note, { note = it }, "Merchant / note")
+        Field(note, { note = it }, "Merchant")
+        NoteField(memo) { memo = it }
         SectionLabel("Category")
         Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
         OutlinedButton({ pickDate = true }, Modifier.fillMaxWidth().height(52.dp)) { Icon(Icons.Filled.Event, null); Spacer(Modifier.width(8.dp)); Text(fmtDate(time)) }
         PrimaryButton("Save payment", v != null && v > 0) {
-            val tx = Txn("manual:${System.nanoTime()}", v!!, note.trim().ifBlank { "Manual" }, cat, time)
+            val tx = Txn("manual:${System.nanoTime()}", v!!, note.trim().ifBlank { "Manual" }, cat, time, note = memo.trim())
             Store.addManual(tx)
             close()
         }
@@ -561,10 +565,7 @@ fun AddTxnSheet(close: () -> Unit) {
         }) { DatePicker(st) }
     }
 }
-
-@Composable
-fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.large) {
+lor = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.large) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             content()
@@ -647,6 +648,7 @@ fun TxnRow(t: Txn, onClick: () -> Unit) {
                     if (check) Icon(Icons.Filled.Warning, "Check category", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.error)
                     if (t.later) Icon(Icons.Filled.CreditCard, "SPayLater", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.secondary)
                     if (t.billPay) Icon(Icons.Filled.Payments, "SPayLater bill", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                    if (t.note.isNotBlank()) Icon(Icons.Filled.Description, "Has note", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(sub, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     color = if (t.category == "Uncategorized" && !t.billPay && !t.income) MaterialTheme.colorScheme.tertiary else muted,
@@ -666,14 +668,14 @@ fun AllPaymentsSheet(onClose: () -> Unit, onPick: (Txn) -> Unit) {
     val cal = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0); add(Calendar.MONTH, -off) }
     val s = cal.timeInMillis
     val e = (cal.clone() as Calendar).apply { add(Calendar.MONTH, 1) }.timeInMillis
-    val list = Store.txns.filter { it.time in s until e && (cat == "All" || it.category == cat) && (q.isBlank() || it.merchant.contains(q.trim(), true)) }
+    val list = Store.txns.filter { it.time in s until e && (cat == "All" || it.category == cat) && (q.isBlank() || it.merchant.contains(q.trim(), true) || it.note.contains(q.trim(), true)) }
     Sheet("All payments", onClose, true) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             IconButton({ off++ }) { Icon(Icons.Filled.ChevronLeft, "Previous month") }
             Text(SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(s)), style = MaterialTheme.typography.titleMedium)
             IconButton({ if (off > 0) off-- }, enabled = off > 0) { Icon(Icons.Filled.ChevronRight, "Next month") }
         }
-        Field(q, { q = it }, "Merchant search")
+        Field(q, { q = it }, "Merchant or note")
         Chips((listOf("All") + Store.cats.map { it.name } + listOf("Uncategorized", "Income")).map { it to it }, cat) { cat = it }
         Text("${rm(list.filter { !it.income }.sumOf { it.amount })} spent · ${rm(list.filter { it.income }.sumOf { it.amount })} in · ${list.size} payments",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1330,4 +1332,10 @@ fun FiltersSheet(close: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+fun NoteField(value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(value, { if (it.length <= 200) onChange(it) }, Modifier.fillMaxWidth(), label = { Text("Note (optional)") },
+        minLines = 2, maxLines = 3, shape = MaterialTheme.shapes.medium, supportingText = { Text("${value.length}/200") })
 }
