@@ -565,7 +565,10 @@ fun AddTxnSheet(close: () -> Unit) {
         }) { DatePicker(st) }
     }
 }
-lor = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.large) {
+
+@Composable
+fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.large) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             content()
