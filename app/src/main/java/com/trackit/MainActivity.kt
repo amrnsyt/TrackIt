@@ -477,7 +477,7 @@ fun History() {
 
 @Composable
 fun Field(v: String, onChange: (String) -> Unit, label: String, kb: KeyboardType = KeyboardType.Text, err: String? = null) =
-    OutlinedTextField(v, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = kb != KeyboardType.Text || label == "Name" || label == "Merchant" || label.startsWith("Merchant") || label.startsWith("Carry") || label == "Keyword",
+    OutlinedTextField(v, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = kb != KeyboardType.Text || label == "Name" || label == "Merchant" || label.startsWith("Merchant") || label.startsWith("Carry") || label == "Keyword" || label.startsWith("New group"),
         isError = err != null, supportingText = { if (err != null) Text(err) }, shape = MaterialTheme.shapes.medium, keyboardOptions = KeyboardOptions(keyboardType = kb))
 
 @Composable
@@ -1041,6 +1041,8 @@ fun DebtScreen() {
     var sheet by remember { mutableStateOf<Debt?>(null) }
     var adding by remember { mutableStateOf(false) }
     var addPl by remember { mutableStateOf(false) }
+    var presetGrp by remember { mutableStateOf("") }
+    var open by remember { mutableStateOf(setOf<String>()) }
     val total = Store.debts.sumOf { it.balance }
     val orig = Store.debts.sumOf { it.total }
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
@@ -1061,7 +1063,14 @@ fun DebtScreen() {
             }
         }
         if (Store.debts.isEmpty()) item { EmptyState(Icons.Filled.CreditCard, "No debts", "Add loans or cards, then link a commitment so the balance drops when you pay it.") }
-        items(Store.debts.toList(), key = { it.id }) { d ->
+        Store.debts.filter { it.group.isNotBlank() }.groupBy { it.group }.forEach { (g, list) ->
+            item(key = "grp$g") {
+                DebtGroupCard(g, list, g in open, { open = if (g in open) open - g else open + g }, { sheet = it }) {
+                    if (g == "SPayLater") addPl = true else { presetGrp = g; adding = true }
+                }
+            }
+        }
+        items(Store.debts.filter { it.group.isBlank() }, key = { it.id }) { d ->
             Card(modifier = Modifier.fillMaxWidth().enter(Store.debts.indexOf(d) + 1).animateItem(), shape = MaterialTheme.shapes.large, onClick = { sheet = d },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1088,18 +1097,21 @@ fun DebtScreen() {
             }
         }
     }
-    if (adding) DebtSheet(null) { adding = false }
+    if (adding) DebtSheet(null, presetGrp) { adding = false; presetGrp = "" }
     if (addPl) PlanSheet { addPl = false }
     sheet?.let { DebtSheet(it) { sheet = null } }
 }
 
 @Composable
-fun DebtSheet(old: Debt?, close: () -> Unit) {
+fun DebtSheet(old: Debt?, presetGroup: String = "", close: () -> Unit) {
     var n by remember { mutableStateOf(old?.name ?: "") }
     var t by remember { mutableStateOf(old?.total?.let { "%.2f".format(it) } ?: "") }
     var b by remember { mutableStateOf(old?.balance?.let { "%.2f".format(it) } ?: "") }
     var mo by remember { mutableStateOf(old?.monthly?.takeIf { it > 0 }?.let { "%.2f".format(it) } ?: "") }
     var d by remember { mutableStateOf(old?.due?.takeIf { it > 0 }?.toString() ?: "") }
+    var grp by remember { mutableStateOf(old?.group ?: presetGroup) }
+    var newGrp by remember { mutableStateOf("") }
+    val gnames = Store.debts.map { it.group }.filter { it.isNotBlank() }.distinct()
     val isPlan = old != null && old.months > 0
     var pc by remember { mutableStateOf(if (isPlan && old!!.monthly > 0) ((old.total - old.balance) / old.monthly + 0.0001).toInt().toString() else "0") }
     val tv = t.replace(",", ".").toDoubleOrNull()
@@ -1113,8 +1125,11 @@ fun DebtSheet(old: Debt?, close: () -> Unit) {
         else Field(b, { b = it }, "Current balance RM (blank = total)", KeyboardType.Decimal)
         Field(mo, { mo = it }, "Monthly payment RM (optional)", KeyboardType.Decimal)
         Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Due day of month (optional)", KeyboardType.Number)
+        SectionLabel("Group (optional)")
+        Chips(listOf("" to "None") + gnames.map { it to it }, grp) { grp = it; newGrp = "" }
+        Field(newGrp, { newGrp = it }, "New group name")
         PrimaryButton("Save", n.isNotBlank() && tv != null && tv > 0 && bv2 != null) {
-            Store.saveDebt(old, Debt(old?.id ?: "d${System.nanoTime()}", n.trim(), tv!!, bv2!!, mo.replace(",", ".").toDoubleOrNull() ?: 0.0, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.firstDue ?: 0L, old?.months ?: 0))
+            Store.saveDebt(old, Debt(old?.id ?: "d${System.nanoTime()}", n.trim(), tv!!, bv2!!, mo.replace(",", ".").toDoubleOrNull() ?: 0.0, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.firstDue ?: 0L, old?.months ?: 0, newGrp.trim().ifBlank { grp }))
             close()
         }
         if (old != null) {
@@ -1341,4 +1356,42 @@ fun FiltersSheet(close: () -> Unit) {
 fun NoteField(value: String, onChange: (String) -> Unit) {
     OutlinedTextField(value, { if (it.length <= 200) onChange(it) }, Modifier.fillMaxWidth(), label = { Text("Note (optional)") },
         minLines = 2, maxLines = 3, shape = MaterialTheme.shapes.medium, supportingText = { Text("${value.length}/200") })
+}
+
+@Composable
+fun DebtGroupCard(name: String, list: List<Debt>, open: Boolean, onToggle: () -> Unit, onOpen: (Debt) -> Unit, onAdd: () -> Unit) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val bal = list.sumOf { it.balance }
+    val tot = list.sumOf { it.total }
+    val mon = list.filter { it.balance > 0.005 }.sumOf { it.monthly }
+    val fin = list.mapNotNull { Store.payoff(it) }.maxByOrNull { it.second }
+    Card(Modifier.fillMaxWidth().animateContentSize(), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onToggle), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                CatAvatar(name)
+                Column(Modifier.weight(1f)) {
+                    Text(name, style = MaterialTheme.typography.titleMedium)
+                    Text("${list.size} item${if (list.size > 1) "s" else ""} · ${mk(rm(mon))}/month", style = MaterialTheme.typography.bodySmall, color = muted)
+                }
+                Icon(if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, if (open) "Collapse" else "Expand", tint = muted)
+            }
+            BudgetBar(tot - bal, tot, color = MaterialTheme.colorScheme.tertiary)
+            Text("${mk(rm(bal))} left of ${mk(rm(tot))}", style = MaterialTheme.typography.bodyMedium)
+            if (fin != null) Text("All done by ${SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date(fin.second))}", style = MaterialTheme.typography.labelMedium, color = muted)
+            if (open) {
+                HorizontalDivider()
+                list.forEach { d ->
+                    val nd = Store.nextDue(d)
+                    Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable { onOpen(d) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(d.name.removePrefix("$name · "), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${mk(rm(d.balance))} left" + (if (nd > 0 && d.balance > 0.005) " · next ${fmtDate(nd)}" else ""), style = MaterialTheme.typography.bodySmall, color = muted)
+                        }
+                        Icon(Icons.Filled.ChevronRight, null, tint = muted)
+                    }
+                }
+                TextButton(onAdd, Modifier.fillMaxWidth()) { Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add to $name") }
+            }
+        }
+    }
 }
