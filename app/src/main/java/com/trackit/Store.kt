@@ -400,12 +400,34 @@ object Store {
         }
         saveC()
     }
+    fun debtLabel(id: String): String? = if (id.startsWith("g:")) id.removePrefix("g:") else debts.firstOrNull { it.id == id }?.name
     private fun payDebt(i: Item, paid: Boolean) {
         if (i.debtId.isBlank()) return
-        val k = debts.indexOfFirst { it.id == i.debtId }; if (k < 0) return
-        val d = debts[k]
-        if (paid) { val nb = (d.balance - i.amount).coerceAtLeast(0.0); if (nb <= 0.005) tpls.removeAll { it.debtId == d.id }; debts[k] = d.copy(balance = nb); dlogs.add(0, DebtLog(d.id, i.id, System.currentTimeMillis(), i.amount)) }
-        else { val li = dlogs.indexOfFirst { it.itemId == i.id && it.debtId == d.id }; if (li >= 0) { debts[k] = d.copy(balance = d.balance + dlogs[li].amount); dlogs.removeAt(li) } }
+        val isGroup = i.debtId.startsWith("g:")
+        if (paid) {
+            val targets = if (isGroup) debts.filter { it.group == i.debtId.removePrefix("g:") && it.balance > 0.005 }.sortedBy { val n = nextDue(it); if (n > 0) n else Long.MAX_VALUE }
+                else debts.filter { it.id == i.debtId }
+            var left = i.amount
+            for (t in targets) {
+                if (left <= 0.005) break
+                val x = debts.indexOfFirst { it.id == t.id }; if (x < 0) continue
+                val pay = if (isGroup) minOf(left, debts[x].balance) else left
+                val nb = (debts[x].balance - pay).coerceAtLeast(0.0)
+                if (!isGroup && nb <= 0.005) tpls.removeAll { it.debtId == t.id }
+                debts[x] = debts[x].copy(balance = nb)
+                dlogs.add(0, DebtLog(t.id, i.id, System.currentTimeMillis(), if (isGroup) pay else minOf(pay, t.balance)))
+                left -= pay
+            }
+            if (isGroup && debts.none { it.group == i.debtId.removePrefix("g:") && it.balance > 0.005 }) tpls.removeAll { it.debtId == i.debtId }
+        } else {
+            val ls = dlogs.filter { it.itemId == i.id }
+            val latest = ls.maxOfOrNull { it.time } ?: return
+            ls.filter { latest - it.time < 5000 }.forEach { l ->
+                val x = debts.indexOfFirst { it.id == l.debtId }
+                if (x >= 0) debts[x] = debts[x].copy(balance = debts[x].balance + l.amount)
+                dlogs.remove(l)
+            }
+        }
     }
     fun saveItem(old: Item?, n: Item, toList: Boolean) {
         if (old == null) items.add(n) else { val k = items.indexOf(old); if (k >= 0) items[k] = n }

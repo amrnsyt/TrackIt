@@ -308,7 +308,8 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     val unc = Store.txns.filter { it.category == "Uncategorized" && !it.billPay && it.time >= monthStart }.sumOf { it.amount }
     val cyc = Store.cycle.value
     val total = if (cyc != null) Store.cycleBought() else rows.sumOf { it.second } + unc
-    val base = if (cyc != null) Store.txns.filter { it.time >= cyc.start } else Store.txns.toList()
+    val cycBase = if (cyc != null) Store.txns.filter { it.time >= cyc.start } else Store.txns.toList()
+    val base = Store.txns.toList()
     val cleft = Store.cycleLeft()
     val dl = cyc?.takeIf { it.next > now }?.let { Math.ceil((it.next - now) / 86400000.0).toInt().coerceAtLeast(1) }
     val budgeted = rows.filter { it.first.budget > 0 }
@@ -340,7 +341,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
                     }
                     if (bTotal > 0) BudgetBar(bSpent, bTotal, color = MaterialTheme.colorScheme.onPrimaryContainer, track = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Pill("${base.size} payments", Color.White.copy(alpha = 0.55f), MaterialTheme.colorScheme.onPrimaryContainer)
+                        Pill("${cycBase.size} payments", Color.White.copy(alpha = 0.55f), MaterialTheme.colorScheme.onPrimaryContainer)
                         if (needs > 0) Pill("$needs need a category", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
                         if (bTotal > 0) Text(statusText(bSpent, bTotal) + " budget", style = MaterialTheme.typography.labelSmall)
                     }
@@ -921,7 +922,7 @@ fun Commitment() {
                     Column(Modifier.weight(1f)) {
                         Text(i.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text((if (i.paid) "Paid" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid") + (if (i.catName.isNotBlank()) " · ${i.catName}" else "") +
-                            (Store.debts.firstOrNull { it.id == i.debtId }?.let { " · Debt: ${it.name}" } ?: ""),
+                            (Store.debtLabel(i.debtId)?.let { " · Debt: $it" } ?: ""),
                             style = MaterialTheme.typography.bodySmall, color = if (i.paid) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1011,21 +1012,33 @@ fun ItemSheet(old: Item?, close: () -> Unit) {
     var keep by remember { mutableStateOf(true) }
     var cat by remember { mutableStateOf(old?.catName ?: "") }
     var debt by remember { mutableStateOf(old?.debtId ?: "") }
+    var gsel by remember { mutableStateOf(old?.debtId?.let { id -> if (id.startsWith("g:")) id.removePrefix("g:") else (Store.debts.firstOrNull { it.id == id }?.group ?: "") } ?: "") }
+    var moreCats by remember { mutableStateOf(false) }
     val v = a.replace(",", ".").toDoubleOrNull()
     Sheet(if (old == null) "Add commitment" else "Edit commitment", close) {
         Field(n, { n = it }, "Name")
         Field(a, { a = it }, "Amount RM", KeyboardType.Decimal)
         Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Due day of month (optional)", KeyboardType.Number)
         SectionLabel("Linked category")
-        Chips(listOf("" to "None") + Store.cats.map { it.name to it.name }, cat) { cat = it }
+        val catOrder = Store.cats.map { it.name }.sortedByDescending { c -> Store.txns.count { it.category == c } }
+        val shownCats = if (moreCats) catOrder else catOrder.take(6) + (if (cat.isNotBlank() && cat !in catOrder.take(6)) listOf(cat) else emptyList())
+        Chips(listOf("" to "None") + shownCats.map { it to it } + (if (!moreCats && catOrder.size > 6) listOf("__more" to "More…") else emptyList()), cat) { if (it == "__more") moreCats = true else cat = it }
         if (Store.debts.isNotEmpty()) {
             SectionLabel("Linked debt (balance drops when paid)")
-            Chips(listOf("" to "None") + Store.debts.map { it.id to it.name }, debt) { debt = it }
+            val groupNames = Store.debts.map { it.group }.filter { it.isNotBlank() }.distinct()
+            val firstRow = listOf("" to "None") + Store.debts.filter { it.group.isBlank() }.map { it.id to it.name } + groupNames.map { "grp:$it" to it }
+            Chips(firstRow, if (gsel.isNotBlank()) "grp:$gsel" else debt) { k ->
+                if (k.startsWith("grp:")) { gsel = k.removePrefix("grp:"); debt = if (gsel == "SPayLater") "" else "g:$gsel" } else { gsel = ""; debt = k }
+            }
+            if (gsel.isNotBlank()) {
+                SectionLabel(if (gsel == "SPayLater") "Which purchase?" else "Pay which part?")
+                Chips((if (gsel != "SPayLater") listOf("g:$gsel" to "Whole group") else emptyList()) + Store.debts.filter { it.group == gsel }.map { it.id to it.name.removePrefix("$gsel · ") }, debt) { debt = it }
+            }
         }
         if (old == null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Save to my list for future cycles", Modifier.weight(1f)); Switch(keep, { keep = it })
         }
-        PrimaryButton("Save", n.isNotBlank() && v != null && v > 0) {
+        PrimaryButton("Save", n.isNotBlank() && v != null && v > 0 && !(gsel == "SPayLater" && debt.isBlank())) {
             Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false, old?.txnId ?: "", cat, debt), keep)
             close()
         }
@@ -1133,7 +1146,7 @@ fun DebtSheet(old: Debt?, presetGroup: String = "", close: () -> Unit) {
             close()
         }
         if (old != null) {
-            val linked = Store.items.filter { it.debtId == old.id }
+            val linked = Store.items.filter { it.debtId == old.id || (old.group.isNotBlank() && it.debtId == "g:" + old.group) }
             if (linked.isNotEmpty()) {
                 SectionLabel("Linked commitments")
                 linked.forEach { Text("${it.name} · ${rm(it.amount)}" + if (it.paid) " · paid" else "") }
