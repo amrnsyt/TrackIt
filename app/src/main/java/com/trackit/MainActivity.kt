@@ -495,6 +495,9 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
     var fee by remember(t.id) { mutableStateOf("") }
     var paidN by remember(t.id) { mutableStateOf("0") }
     val v = amt.replace(",", ".").toDoubleOrNull()
+    val sel = remember(t.id) { mutableStateMapOf<String, String>() }
+    val linkedNow = Store.linksOf(t.id)
+    val alloc = linkedNow.sumOf { it.amount } + sel.values.sumOf { it.replace(",", ".").toDoubleOrNull() ?: 0.0 }
     Sheet("Edit payment", close) {
         Field(amt, { amt = it }, "Amount RM", KeyboardType.Decimal, if (v == null || v <= 0) "Enter a valid amount" else null)
         Field(mer, { mer = it }, "Merchant")
@@ -516,9 +519,37 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
             TextButton({ splitOpen = true }, Modifier.fillMaxWidth()) { Text(if (t.split.isNotBlank()) "Edit split" else "Split across categories") }
         }
         if (t.later) Text("SPayLater purchase. Manage or delete the plan in the Debt tab.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        PrimaryButton("Save changes", v != null && v > 0) {
+        if (!inc && !t.later && !t.billPay && Store.items.isNotEmpty()) {
+            SectionLabel("Pays commitment")
+            linkedNow.forEach { l ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text((Store.items.firstOrNull { it.id == l.itemId }?.name ?: "") + " · " + rm(l.amount), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    TextButton({ Store.unlink(l) }) { Text("Unlink") }
+                }
+            }
+            Store.items.filter { !it.paid && it.amount - it.paidPart > 0.005 }.sortedBy { if (it.due == 0) 99 else it.due }.forEach { i ->
+                val rem = i.amount - i.paidPart
+                val toggle: () -> Unit = {
+                    if (i.id in sel) { sel.remove(i.id) }
+                    else { val free = ((v ?: t.amount) - alloc).coerceAtLeast(0.0); sel[i.id] = "%.2f".format(minOf(rem, free)) }
+                }
+                Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable { toggle() }, verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(i.id in sel, { toggle() })
+                    Column(Modifier.weight(1f)) {
+                        Text(i.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Remaining ${rm(rem)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (i.id in sel) OutlinedTextField(sel[i.id] ?: "", { sel[i.id] = it }, Modifier.width(112.dp), singleLine = true,
+                        shape = MaterialTheme.shapes.small, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                }
+            }
+            if (linkedNow.isNotEmpty() || sel.isNotEmpty()) Text("Allocated ${rm(alloc)} of ${rm(v ?: t.amount)} · remaining ${rm((v ?: t.amount) - alloc)}", style = MaterialTheme.typography.bodySmall,
+                color = if (alloc > (v ?: t.amount) + 0.005) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        PrimaryButton("Save changes", v != null && v > 0 && alloc <= v + 0.005) {
             val u = t.copy(amount = v!!, merchant = mer.trim().ifBlank { t.merchant }, category = if (inc) "Income" else if (cat == "Income") "Uncategorized" else cat, income = inc, counted = cnt, split = if (cat != t.category || Math.abs(v!! - t.amount) > 0.004) "" else t.split, note = memo.trim())
             Store.updateTxn(t, u)
+            Store.linkAll(u.id, sel.mapNotNull { (id, a) -> a.replace(",", ".").toDoubleOrNull()?.takeIf { it > 0 }?.let { id to it } })
             close()
         }
         TextButton({ close(); onDelete(t) }, Modifier.fillMaxWidth()) { Text("Delete payment", color = MaterialTheme.colorScheme.error) }
@@ -837,7 +868,7 @@ fun Commitment() {
     val ink = MaterialTheme.colorScheme.onPrimaryContainer
     val dark = ButtonDefaults.buttonColors(containerColor = ink, contentColor = MaterialTheme.colorScheme.primaryContainer)
     val sorted = Store.items.sortedWith(compareBy({ it.paid }, { if (it.due == 0) 99 else it.due }))
-    val paidAmt = Store.items.filter { it.paid }.sumOf { it.amount }
+    val paidAmt = Store.items.sumOf { if (it.paid) it.amount else it.paidPart }
     val allAmt = Store.items.sumOf { it.amount }
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
         item {
@@ -921,12 +952,12 @@ fun Commitment() {
                     Checkbox(i.paid, { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); Store.togglePaid(i) })
                     Column(Modifier.weight(1f)) {
                         Text(i.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text((if (i.paid) "Paid" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid") + (if (i.catName.isNotBlank()) " · ${i.catName}" else "") +
+                        Text((if (i.paid) "Paid" else if (i.paidPart > 0.005) "Partly paid ${rm(i.paidPart)}" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid") + (if (i.catName.isNotBlank()) " · ${i.catName}" else "") +
                             (Store.debtLabel(i.debtId)?.let { " · Debt: $it" } ?: ""),
                             style = MaterialTheme.typography.bodySmall, color = if (i.paid) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(rm(i.amount), style = MaterialTheme.typography.titleMedium)
+                        Text(rm(if (i.paid) i.amount else i.amount - i.paidPart), style = MaterialTheme.typography.titleMedium)
                         if (soon) Pill("Due soon", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
                     }
                 }
@@ -1039,7 +1070,7 @@ fun ItemSheet(old: Item?, close: () -> Unit) {
             Text("Save to my list for future cycles", Modifier.weight(1f)); Switch(keep, { keep = it })
         }
         PrimaryButton("Save", n.isNotBlank() && v != null && v > 0 && !(gsel == "SPayLater" && debt.isBlank())) {
-            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false, old?.txnId ?: "", cat, debt), keep)
+            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false, old?.txnId ?: "", cat, debt, old?.paidPart ?: 0.0), keep)
             close()
         }
         if (old != null) {
