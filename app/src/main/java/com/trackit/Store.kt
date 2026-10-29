@@ -67,6 +67,7 @@ object Store {
         load()
         ready = true
         rollover()
+        txns.filter { t -> t.category == "Uncategorized" && links.any { it.txnId == t.id } }.map { it.id }.forEach { applyLinkSplit(it) }
     }
 
     private fun load() {
@@ -472,11 +473,20 @@ object Store {
         saveC()
         applyLinkSplit(l.txnId)
     }
+    private fun ensureCat(name: String) {
+        if (name == "Uncategorized" || cats.any { it.name.equals(name, true) }) return
+        val c = Category(name, "")
+        cats.add(c.copy(periodStart = startOf(c))); save()
+    }
     private fun applyLinkSplit(txnId: String) {
         val ti = txns.indexOfFirst { it.id == txnId }; if (ti < 0) return
-        val cats = linksOf(txnId).mapNotNull { l -> items.firstOrNull { it.id == l.itemId }?.takeIf { it.catName.isNotBlank() }?.let { it.catName to l.amount } }
-        if (cats.isEmpty()) return
         val t = txns[ti]
+        val cats = linksOf(txnId).mapNotNull { l -> items.firstOrNull { it.id == l.itemId }?.let { it.catName.ifBlank { "Commitment" } to l.amount } }
+        if (cats.isEmpty()) {
+            if (t.category == "Commitment" && t.split.isBlank()) { txns[ti] = t.copy(category = "Uncategorized"); save() }
+            return
+        }
+        cats.map { it.first }.distinct().forEach { ensureCat(it) }
         val by = cats.groupBy({ it.first }, { it.second }).mapValues { it.value.sum() }.toMutableMap()
         val rest = t.amount - by.values.sum()
         if (rest > 0.005) by["Uncategorized"] = (by["Uncategorized"] ?: 0.0) + rest
