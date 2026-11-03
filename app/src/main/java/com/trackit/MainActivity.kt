@@ -257,7 +257,7 @@ fun App() {
                     }
                 }
             }
-            HorizontalPager(pager, Modifier.weight(1f), beyondViewportPageCount = 1, flingBehavior = PagerDefaults.flingBehavior(state = pager, snapPositionalThreshold = 0.3f)) { page ->
+            HorizontalPager(pager, Modifier.weight(1f), beyondViewportPageCount = 1) { page ->
                 Box(Modifier.graphicsLayer {
                     val off = ((pager.currentPage - page) + pager.currentPageOffsetFraction).absoluteValue.coerceIn(0f, 1f)
                     alpha = 1f - off * 0.5f; scaleX = 1f - off * 0.05f; scaleY = 1f - off * 0.05f
