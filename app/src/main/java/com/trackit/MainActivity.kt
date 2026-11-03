@@ -51,6 +51,9 @@ import kotlinx.coroutines.delay
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -511,8 +514,7 @@ fun EditTxnSheet(t: Txn, onDelete: (Txn) -> Unit, close: () -> Unit) {
             Switch(cnt, { cnt = it })
         }
         if (!inc) {
-            SectionLabel("Category")
-            Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
+            CategoryField(cat) { cat = it }
             val hist = Store.history(mer)
             if (hist.isNotEmpty()) Text("Usually: " + hist.joinToString { "${it.first} (${it.second})" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (t.split.isNotBlank()) Text("Split: " + Store.parts(t).joinToString { "${it.first} ${rm(it.second)}" }, style = MaterialTheme.typography.bodySmall)
@@ -575,8 +577,7 @@ fun AddTxnSheet(close: () -> Unit) {
         Field(amt, { amt = it }, "Amount RM", KeyboardType.Decimal)
         Field(note, { note = it }, "Merchant")
         NoteField(memo) { memo = it }
-        SectionLabel("Category")
-        Chips((Store.cats.map { it.name } + "Uncategorized").map { it to it }, cat) { cat = it }
+        CategoryField(cat) { cat = it }
         OutlinedButton({ pickDate = true }, Modifier.fillMaxWidth().height(52.dp)) { Icon(Icons.Filled.Event, null); Spacer(Modifier.width(8.dp)); Text(fmtDate(time)) }
         PrimaryButton("Save payment", v != null && v > 0) {
             val tx = Txn("manual:${System.nanoTime()}", v!!, note.trim().ifBlank { "Manual" }, cat, time, note = memo.trim())
@@ -1436,6 +1437,82 @@ fun DebtGroupCard(name: String, list: List<Debt>, open: Boolean, onToggle: () ->
                 }
                 TextButton(onAdd, Modifier.fillMaxWidth()) { Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add to $name") }
             }
+        }
+    }
+}
+
+@Composable
+fun CategoryField(value: String, onChange: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(onClick = { open = true }, color = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.medium) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            CatAvatar(value, 40.dp)
+            Column(Modifier.weight(1f)) {
+                Text("Category", style = MaterialTheme.typography.labelSmall, color = muted)
+                Text(value, style = MaterialTheme.typography.titleMedium)
+            }
+            Icon(Icons.Filled.ExpandMore, null, tint = muted)
+        }
+    }
+    if (open) CategoryPicker(value, { open = false }, onChange)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CategoryPicker(current: String, close: () -> Unit, onPick: (String) -> Unit) {
+    var q by remember { mutableStateOf("") }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val use = remember { Store.txns.groupingBy { it.category }.eachCount() }
+    val all = (Store.cats.map { it.name }.filter { it != "Income" } + "Uncategorized").distinct()
+        .sortedBy { it.lowercase() }.sortedByDescending { if (it == "Uncategorized") -1 else (use[it] ?: 0) }
+    val list = all.filter { q.isBlank() || it.contains(q.trim(), true) }
+    val exact = all.any { it.equals(q.trim(), true) }
+    val focus = remember { FocusRequester() }
+    fun create() {
+        val n = q.trim()
+        if (n.isEmpty()) return
+        val hit = all.firstOrNull { it.equals(n, true) }
+        if (hit == null) Store.addCat(Category(n, ""))
+        onPick(hit ?: n); close()
+    }
+    ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column(Modifier.fillMaxWidth().height((LocalConfiguration.current.screenHeightDp * 0.8f).dp).imePadding().navigationBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Select category", style = MaterialTheme.typography.headlineSmall)
+                IconButton(close) { Icon(Icons.Filled.Close, "Close") }
+            }
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp), reverseLayout = true, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item(key = "__new") {
+                    if (q.isNotBlank() && !exact) PickRow(Icons.Filled.Add, "Create “${q.trim()}”", MaterialTheme.colorScheme.primaryContainer) { create() }
+                    else if (q.isBlank()) PickRow(Icons.Filled.Add, "New category", MaterialTheme.colorScheme.background) { focus.requestFocus() }
+                }
+                items(list, key = { it }) { name ->
+                    Surface(onClick = { onPick(name); close() }, color = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.medium) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            CatAvatar(name, 36.dp)
+                            Text(name, Modifier.weight(1f), fontWeight = if (name == current) FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if ((use[name] ?: 0) > 0) Text("${use[name]}", style = MaterialTheme.typography.labelMedium, color = muted)
+                            if (name == current) Icon(Icons.Filled.Check, "Selected")
+                        }
+                    }
+                }
+            }
+            OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).focusRequester(focus),
+                placeholder = { Text("Search or add new category") }, leadingIcon = { Icon(Icons.Filled.Search, null) },
+                trailingIcon = { if (q.isNotEmpty()) IconButton({ q = "" }) { Icon(Icons.Filled.Close, "Clear") } },
+                singleLine = true, shape = RoundedCornerShape(28.dp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { if (q.isNotBlank() && !exact) create() }))
+        }
+    }
+}
+
+@Composable
+fun PickRow(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, bg: Color, onClick: () -> Unit) {
+    Surface(onClick = onClick, color = bg, shape = MaterialTheme.shapes.medium) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Icon(icon, null, Modifier.size(24.dp))
+            Text(text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
