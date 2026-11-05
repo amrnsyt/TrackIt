@@ -308,7 +308,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     val today = week.firstOrNull { now - it in 0 until 86400000L } ?: week[0]
     val rows = Store.cats.map { it to Store.spent(it) }
     val monthStart = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
-    val unc = Store.txns.filter { it.category == "Uncategorized" && !it.billPay && it.time >= monthStart }.sumOf { it.amount }
+    val unc = Store.txns.filter { it.category == "Uncategorized" && !it.billPay && !it.reimb && it.time >= monthStart }.sumOf { it.amount }
     val cyc = Store.cycle.value
     val total = if (cyc != null) Store.cycleBought() else rows.sumOf { it.second } + unc
     val cycBase = if (cyc != null) Store.txns.filter { it.time >= cyc.start } else Store.txns.toList()
@@ -318,7 +318,7 @@ fun Activity(onDelete: (Txn) -> Unit, goBudgets: () -> Unit) {
     val budgeted = rows.filter { it.first.budget > 0 }
     val bTotal = budgeted.sumOf { it.first.budget }; val bSpent = budgeted.sumOf { it.second }
     val shown by animateFloatAsState(total.toFloat(), tween(600), label = "total")
-    val needs = base.count { it.category == "Uncategorized" && !it.billPay }
+    val needs = base.count { it.category == "Uncategorized" && !it.billPay && !it.reimb }
     val list0 = sel?.let { s -> base.filter { it.time >= s && it.time < s + 86400000L } } ?: base
     val groups = list0.groupBy { dayLabel(it.time) }
     val cards = rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }
@@ -481,7 +481,7 @@ fun History() {
 
 @Composable
 fun Field(v: String, onChange: (String) -> Unit, label: String, kb: KeyboardType = KeyboardType.Text, err: String? = null) =
-    OutlinedTextField(v, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = kb != KeyboardType.Text || label == "Name" || label == "Merchant" || label.startsWith("Merchant") || label.startsWith("Carry") || label == "Keyword" || label.startsWith("New group"),
+    OutlinedTextField(v, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = kb != KeyboardType.Text || label == "Name" || label == "Merchant" || label.startsWith("Merchant") || label.startsWith("Carry") || label == "Keyword" || label.startsWith("New group") || label.startsWith("Who"),
         isError = err != null, supportingText = { if (err != null) Text(err) }, shape = MaterialTheme.shapes.medium, keyboardOptions = KeyboardOptions(keyboardType = kb))
 
 @Composable
@@ -667,10 +667,11 @@ fun CatSheet(edit: Category?, close: () -> Unit) {
 @Composable
 fun TxnRow(t: Txn, onClick: () -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val check = !t.income && !t.billPay && t.category != "Uncategorized" && Store.uncertain(t.merchant)
+    val check = !t.income && !t.billPay && !t.reimb && t.category != "Uncategorized" && Store.uncertain(t.merchant)
     val date = SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()).format(Date(t.time))
     val sub = when {
         t.billPay -> "SPayLater bill · $date"
+        t.reimb -> "Reimbursable · $date"
         t.category == "Uncategorized" -> "Tap to categorize · $date"
         else -> "${t.category} · $date"
     }
@@ -684,11 +685,12 @@ fun TxnRow(t: Txn, onClick: () -> Unit) {
                     if (check) Icon(Icons.Filled.Warning, "Check category", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.error)
                     if (t.later) Icon(Icons.Filled.CreditCard, "SPayLater", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.secondary)
                     if (t.billPay) Icon(Icons.Filled.Payments, "SPayLater bill", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                    if (t.reimb) Icon(Icons.Filled.SwapHoriz, "Reimbursable", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.secondary)
                     if (t.note.isNotBlank()) Icon(Icons.Filled.Description, "Has note", Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(sub, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    color = if (t.category == "Uncategorized" && !t.billPay && !t.income) MaterialTheme.colorScheme.tertiary else muted,
-                    fontWeight = if (t.category == "Uncategorized" && !t.billPay && !t.income) FontWeight.SemiBold else FontWeight.Normal)
+                    color = if (t.category == "Uncategorized" && !t.billPay && !t.reimb && !t.income) MaterialTheme.colorScheme.tertiary else muted,
+                    fontWeight = if (t.category == "Uncategorized" && !t.billPay && !t.reimb && !t.income) FontWeight.SemiBold else FontWeight.Normal)
             }
             Text((if (t.income) "+" else "") + rm(t.amount), style = MaterialTheme.typography.titleMedium, maxLines = 1,
                 color = if (t.income) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface)
@@ -728,7 +730,7 @@ fun trend(monthly: Boolean): List<Pair<String, Double>> {
             if (monthly) { set(Calendar.DAY_OF_MONTH, 1); add(Calendar.MONTH, -i) } else add(Calendar.DAY_OF_MONTH, -i)
         }
         val e = (s.clone() as Calendar).apply { if (monthly) add(Calendar.MONTH, 1) else add(Calendar.DAY_OF_MONTH, 1) }
-        fmt.format(s.time) to Store.txns.filter { !it.income && !it.billPay && it.time >= s.timeInMillis && it.time < e.timeInMillis }.sumOf { it.amount }
+        fmt.format(s.time) to Store.txns.filter { !it.income && !it.billPay && !it.reimb && it.time >= s.timeInMillis && it.time < e.timeInMillis }.sumOf { it.amount }
     }
 }
 
@@ -943,6 +945,7 @@ fun Commitment() {
                 }
             }
         }
+        if (Store.items.any { Store.outstanding(it) > 0.005 }) item { ReceiveCard() }
         if (bill != null || Store.dlogs.any { it.itemId.startsWith("bill") }) item { BillCard(bill) { billSheet = true } }
         if (Store.items.isEmpty() && bill == null) item { EmptyState(Icons.Filled.Event, "No commitments", "Add rent, loans or bills you need to pay this cycle. Saved ones can be picked again next cycle.") }
         items(sorted, key = { it.id }) { i ->
@@ -954,7 +957,7 @@ fun Commitment() {
                     Column(Modifier.weight(1f)) {
                         Text(i.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text((if (i.paid) "Paid" else if (i.paidPart > 0.005) "Partly paid ${rm(i.paidPart)}" else if (i.due > 0) "Due on day ${i.due}" else "Unpaid") + (if (i.catName.isNotBlank()) " · ${i.catName}" else "") +
-                            (Store.debtLabel(i.debtId)?.let { " · Debt: $it" } ?: ""),
+                            (Store.debtLabel(i.debtId)?.let { " · Debt: $it" } ?: "") + (if (i.reimb) " · Reimbursable" else ""),
                             style = MaterialTheme.typography.bodySmall, color = if (i.paid) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1046,11 +1049,21 @@ fun ItemSheet(old: Item?, close: () -> Unit) {
     var debt by remember { mutableStateOf(old?.debtId ?: "") }
     var gsel by remember { mutableStateOf(old?.debtId?.let { id -> if (id.startsWith("g:")) id.removePrefix("g:") else (Store.debts.firstOrNull { it.id == id }?.group ?: "") } ?: "") }
     var moreCats by remember { mutableStateOf(false) }
+    var reimb by remember { mutableStateOf(old?.reimb ?: false) }
+    var who by remember { mutableStateOf(old?.who ?: "") }
     val v = a.replace(",", ".").toDoubleOrNull()
     Sheet(if (old == null) "Add commitment" else "Edit commitment", close) {
         Field(n, { n = it }, "Name")
         Field(a, { a = it }, "Amount RM", KeyboardType.Decimal)
         Field(d, { d = it.filter { c -> c.isDigit() }.take(2) }, "Due day of month (optional)", KeyboardType.Number)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Reimbursable")
+                Text("I pay first and someone pays me back. Not counted in Safe to spend.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(reimb, { reimb = it })
+        }
+        if (reimb) Field(who, { who = it }, "Who will pay you back (optional)")
         SectionLabel("Linked category")
         val catOrder = Store.cats.map { it.name }.sortedByDescending { c -> Store.txns.count { it.category == c } }
         val shownCats = if (moreCats) catOrder else catOrder.take(6) + (if (cat.isNotBlank() && cat !in catOrder.take(6)) listOf(cat) else emptyList())
@@ -1070,8 +1083,15 @@ fun ItemSheet(old: Item?, close: () -> Unit) {
         if (old == null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Save to my list for future cycles", Modifier.weight(1f)); Switch(keep, { keep = it })
         }
+        if (old != null && old.reimb) {
+            val rs = Store.rcvs.filter { it.itemId == old.id }
+            if (rs.isNotEmpty()) {
+                SectionLabel("Received")
+                rs.forEach { r -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(rm(r.amount), Modifier.weight(1f)); TextButton({ Store.undoReceive(r) }) { Text("Undo") } } }
+            }
+        }
         PrimaryButton("Save", n.isNotBlank() && v != null && v > 0 && !(gsel == "SPayLater" && debt.isBlank())) {
-            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false, old?.txnId ?: "", cat, debt, old?.paidPart ?: 0.0), keep)
+            Store.saveItem(old, Item(old?.id ?: "i${System.nanoTime()}", n.trim(), v!!, d.toIntOrNull()?.coerceIn(0, 31) ?: 0, old?.paid ?: false, old?.txnId ?: "", cat, debt, old?.paidPart ?: 0.0, reimb, who.trim(), old?.recv ?: 0.0), keep)
             close()
         }
         if (old != null) {
@@ -1243,7 +1263,7 @@ fun BillSheet(close: () -> Unit) {
     var link by remember { mutableStateOf(false) }
     var pick by remember { mutableStateOf<String?>(null) }
     val v = amt.replace(",", ".").toDoubleOrNull()
-    val cands = Store.txns.filter { !it.income && !it.later && !it.billPay && it.time > System.currentTimeMillis() - 45L * 86400000L }.take(15)
+    val cands = Store.txns.filter { !it.income && !it.later && !it.billPay && !it.reimb && it.time > System.currentTimeMillis() - 45L * 86400000L }.take(15)
     Sheet("SPayLater bill", close) {
         if (b != null) {
             Text("Due ${fmtDate(b.month)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1514,5 +1534,70 @@ fun PickRow(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String,
             Icon(icon, null, Modifier.size(24.dp))
             Text(text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+@Composable
+fun ReceiveCard() {
+    var pick by remember { mutableStateOf<Item?>(null) }
+    val outs = Store.items.filter { Store.outstanding(it) > 0.005 }
+    val sug = Store.suggestions()
+    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("To receive", style = MaterialTheme.typography.titleMedium)
+                    Text("Waiting for ${mk(rm(Store.toReceive()))}", style = MaterialTheme.typography.bodySmall)
+                }
+                Icon(Icons.Filled.SwapHoriz, null)
+            }
+            outs.forEach { i ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(i.who.ifBlank { i.name }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${i.name} · ${mk(rm(Store.outstanding(i)))}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    TextButton({ pick = i }) { Text("Mark received") }
+                }
+            }
+            sug.forEach { (i, t) ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${rm(t.amount)} income on ${fmtDate(t.time)} may be for ${i.who.ifBlank { i.name }}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    FilledTonalButton({ Store.receive(i, minOf(t.amount, Store.outstanding(i)), t.id) }) { Text("Confirm") }
+                }
+            }
+        }
+    }
+    pick?.let { ReceiveSheet(it) { pick = null } }
+}
+
+@Composable
+fun ReceiveSheet(item: Item, close: () -> Unit) {
+    val out = Store.outstanding(item)
+    var amt by remember { mutableStateOf("%.2f".format(out)) }
+    var link by remember { mutableStateOf(false) }
+    var pick by remember { mutableStateOf<String?>(null) }
+    val v = amt.replace(",", ".").toDoubleOrNull()
+    val cands = Store.txns.filter { t -> t.income && t.time > System.currentTimeMillis() - 45L * 86400000L && Store.rcvs.none { it.txnId == t.id } }.take(15)
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Sheet("Mark received", close) {
+        Text("${item.who.ifBlank { item.name }} · waiting for ${rm(out)}", color = muted)
+        Chips(listOf("N" to "New income", "L" to "Already recorded"), if (link) "L" else "N") { link = it == "L"; pick = null }
+        if (link) {
+            Text("Pick the income already in your list. It is counted once in your balance.", style = MaterialTheme.typography.bodySmall, color = muted)
+            if (cands.isEmpty()) Text("No recent income found.", color = muted)
+            cands.forEach { t ->
+                Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable { pick = t.id; amt = "%.2f".format(minOf(t.amount, out)) }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(pick == t.id, { pick = t.id; amt = "%.2f".format(minOf(t.amount, out)) })
+                    Column(Modifier.weight(1f)) {
+                        Text(t.merchant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${fmtDate(t.time)} · ${rm(t.amount)}", style = MaterialTheme.typography.bodySmall, color = muted)
+                    }
+                }
+            }
+        }
+        Field(amt, { amt = it }, "Amount received RM", KeyboardType.Decimal)
+        PrimaryButton("Mark received", v != null && v > 0 && v <= out + 0.005 && (!link || pick != null)) { Store.receive(item, v!!, pick); close() }
     }
 }

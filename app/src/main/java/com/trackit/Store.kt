@@ -16,11 +16,12 @@ data class Category(
     val name: String, val keywords: String, val budget: Double = 0.0,
     val period: String = "MONTHLY", val startDay: Int = 1, val periodStart: Long = 0L
 )
-data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false, val counted: Boolean = true, val later: Boolean = false, val planId: String = "", val split: String = "", val billPay: Boolean = false, val note: String = "")
-data class Tpl(val id: String, val name: String, val amount: Double, val due: Int, val catName: String = "", val debtId: String = "")
+data class Txn(val id: String, val amount: Double, val merchant: String, val category: String, val time: Long, val income: Boolean = false, val counted: Boolean = true, val later: Boolean = false, val planId: String = "", val split: String = "", val billPay: Boolean = false, val note: String = "", val reimb: Boolean = false)
+data class Tpl(val id: String, val name: String, val amount: Double, val due: Int, val catName: String = "", val debtId: String = "", val reimb: Boolean = false, val who: String = "")
 data class Debt(val id: String, val name: String, val total: Double, val balance: Double, val monthly: Double, val due: Int, val firstDue: Long = 0L, val months: Int = 0, val group: String = "")
 data class DebtLog(val debtId: String, val itemId: String, val time: Long, val amount: Double)
-data class Item(val id: String, val name: String, val amount: Double, val due: Int, val paid: Boolean = false, val txnId: String = "", val catName: String = "", val debtId: String = "", val paidPart: Double = 0.0)
+data class Item(val id: String, val name: String, val amount: Double, val due: Int, val paid: Boolean = false, val txnId: String = "", val catName: String = "", val debtId: String = "", val paidPart: Double = 0.0, val reimb: Boolean = false, val who: String = "", val recv: Double = 0.0)
+data class Rcv(val itemId: String, val txnId: String, val amount: Double)
 data class Link(val txnId: String, val itemId: String, val amount: Double)
 data class Cycle(val start: Long, val salary: Double, val next: Long = 0L, val carry: Double = 0.0)
 data class CSnap(val id: String, val start: Long, val end: Long, val salary: Double, val committed: Double, val spent: Double, val income: Double = 0.0, val carryIn: Double = 0.0, val carryOut: Double = 0.0)
@@ -38,6 +39,7 @@ object Store {
     val debts = mutableStateListOf<Debt>()
     val dlogs = mutableStateListOf<DebtLog>()
     val links = mutableStateListOf<Link>()
+    val rcvs = mutableStateListOf<Rcv>()
     val cycle = mutableStateOf<Cycle?>(null)
     private var ready = false
     private lateinit var ctx: Context
@@ -71,7 +73,7 @@ object Store {
     }
 
     private fun load() {
-        cats.clear(); txns.clear(); snaps.clear(); tpls.clear(); items.clear(); csnaps.clear(); debts.clear(); dlogs.clear(); links.clear()
+        cats.clear(); txns.clear(); snaps.clear(); tpls.clear(); items.clear(); csnaps.clear(); debts.clear(); dlogs.clear(); links.clear(); rcvs.clear()
         val s = sp()
         JSONArray(s.getString("cats", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let {
@@ -86,7 +88,7 @@ object Store {
             Category("Bills", "tnb,unifi,maxis,celcom,digi,water")))
         JSONArray(s.getString("txns", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let {
-                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false), it.optBoolean("k", true), it.optBoolean("l", false), it.optString("pl", ""), it.optString("sp", ""), it.optBoolean("bp", false), it.optString("nt", "")))
+                txns.add(Txn(it.getString("i"), it.getDouble("a"), it.getString("m"), it.getString("c"), it.getLong("t"), it.optBoolean("n", false), it.optBoolean("k", true), it.optBoolean("l", false), it.optString("pl", ""), it.optString("sp", ""), it.optBoolean("bp", false), it.optString("nt", ""), it.optBoolean("rb", false)))
             }
         }
         JSONArray(s.getString("snaps", "[]")).let { a ->
@@ -95,10 +97,10 @@ object Store {
             }
         }
         JSONArray(s.getString("tpl", "[]")).let { a ->
-            for (i in 0 until a.length()) a.getJSONObject(i).let { tpls.add(Tpl(it.getString("i"), it.getString("n"), it.getDouble("a"), it.getInt("d"), it.optString("g", ""), it.optString("b", ""))) }
+            for (i in 0 until a.length()) a.getJSONObject(i).let { tpls.add(Tpl(it.getString("i"), it.getString("n"), it.getDouble("a"), it.getInt("d"), it.optString("g", ""), it.optString("b", ""), it.optBoolean("rb", false), it.optString("wh", ""))) }
         }
         JSONArray(s.getString("items", "[]")).let { a ->
-            for (i in 0 until a.length()) a.getJSONObject(i).let { items.add(Item(it.getString("i"), it.getString("n"), it.getDouble("a"), it.getInt("d"), it.optBoolean("p", false), it.optString("t", ""), it.optString("g", ""), it.optString("b", ""), it.optDouble("pp", 0.0))) }
+            for (i in 0 until a.length()) a.getJSONObject(i).let { items.add(Item(it.getString("i"), it.getString("n"), it.getDouble("a"), it.getInt("d"), it.optBoolean("p", false), it.optString("t", ""), it.optString("g", ""), it.optString("b", ""), it.optDouble("pp", 0.0), it.optBoolean("rb", false), it.optString("wh", ""), it.optDouble("rc", 0.0))) }
         }
         JSONArray(s.getString("csnaps", "[]")).let { a ->
             for (i in 0 until a.length()) a.getJSONObject(i).let { csnaps.add(CSnap(it.getString("i"), it.getLong("s"), it.getLong("e"), it.getDouble("y"), it.getDouble("c"), it.getDouble("x"), it.optDouble("n", 0.0), it.optDouble("ci", 0.0), it.optDouble("co", 0.0))) }
@@ -114,6 +116,7 @@ object Store {
         if (mem.isEmpty()) txns.filter { !it.income }.forEach { learnMerchant(it.merchant, it.category, 1, false) }
         for (i in debts.indices) if (debts[i].months > 0 && debts[i].group.isBlank()) debts[i] = debts[i].copy(group = "SPayLater")
         JSONArray(s.getString("links", "[]")).let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { links.add(Link(it.getString("t"), it.getString("i"), it.getDouble("a"))) } }
+        JSONArray(s.getString("rcvs", "[]")).let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { rcvs.add(Rcv(it.getString("i"), it.getString("t"), it.getDouble("a"))) } }
         val pids = debts.filter { it.months > 0 }.map { it.id }
         if (pids.isNotEmpty()) {
             items.removeAll { it.id in pids }; tpls.removeAll { it.id in pids }
@@ -128,7 +131,7 @@ object Store {
         return JSONObject().put("app", "TrackIt").put("cats", JSONArray(s.getString("cats", "[]")))
             .put("txns", JSONArray(s.getString("txns", "[]"))).put("snaps", JSONArray(s.getString("snaps", "[]")))
             .put("tpl", JSONArray(s.getString("tpl", "[]"))).put("items", JSONArray(s.getString("items", "[]")))
-            .put("csnaps", JSONArray(s.getString("csnaps", "[]"))).put("cyc", s.getString("cyc", "")).put("debts", JSONArray(s.getString("debts", "[]"))).put("dlogs", JSONArray(s.getString("dlogs", "[]"))).put("mem", JSONObject(s.getString("mem", "{}"))).put("rules", JSONArray(s.getString("rules", "[]"))).put("links", JSONArray(s.getString("links", "[]"))).toString()
+            .put("csnaps", JSONArray(s.getString("csnaps", "[]"))).put("cyc", s.getString("cyc", "")).put("debts", JSONArray(s.getString("debts", "[]"))).put("dlogs", JSONArray(s.getString("dlogs", "[]"))).put("mem", JSONObject(s.getString("mem", "{}"))).put("rules", JSONArray(s.getString("rules", "[]"))).put("links", JSONArray(s.getString("links", "[]"))).put("rcvs", JSONArray(s.getString("rcvs", "[]"))).toString()
     }
 
     fun restore(json: String) {
@@ -136,13 +139,13 @@ object Store {
         val c = o.getJSONArray("cats"); val t = o.getJSONArray("txns"); val h = o.optJSONArray("snaps") ?: JSONArray()
         sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString())
             .putString("tpl", (o.optJSONArray("tpl") ?: JSONArray()).toString()).putString("items", (o.optJSONArray("items") ?: JSONArray()).toString())
-            .putString("csnaps", (o.optJSONArray("csnaps") ?: JSONArray()).toString()).putString("cyc", o.optString("cyc", "")).putString("debts", (o.optJSONArray("debts") ?: JSONArray()).toString()).putString("dlogs", (o.optJSONArray("dlogs") ?: JSONArray()).toString()).putString("mem", (o.optJSONObject("mem") ?: JSONObject()).toString()).putString("rules", (o.optJSONArray("rules") ?: JSONArray(sp().getString("rules", "[]"))).toString()).putString("links", (o.optJSONArray("links") ?: JSONArray()).toString()).apply()
+            .putString("csnaps", (o.optJSONArray("csnaps") ?: JSONArray()).toString()).putString("cyc", o.optString("cyc", "")).putString("debts", (o.optJSONArray("debts") ?: JSONArray()).toString()).putString("dlogs", (o.optJSONArray("dlogs") ?: JSONArray()).toString()).putString("mem", (o.optJSONObject("mem") ?: JSONObject()).toString()).putString("rules", (o.optJSONArray("rules") ?: JSONArray(sp().getString("rules", "[]"))).toString()).putString("links", (o.optJSONArray("links") ?: JSONArray()).toString()).putString("rcvs", (o.optJSONArray("rcvs") ?: JSONArray()).toString()).apply()
         load(); rollover(); loadRules()
     }
 
     private fun save() {
         val c = JSONArray().also { a -> cats.forEach { a.put(JSONObject().put("n", it.name).put("k", it.keywords).put("b", it.budget).put("p", it.period).put("d", it.startDay).put("s", it.periodStart)) } }
-        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income).put("k", it.counted).put("l", it.later).put("pl", it.planId).put("sp", it.split).put("bp", it.billPay).put("nt", it.note)) } }
+        val t = JSONArray().also { a -> txns.forEach { a.put(JSONObject().put("i", it.id).put("a", it.amount).put("m", it.merchant).put("c", it.category).put("t", it.time).put("n", it.income).put("k", it.counted).put("l", it.later).put("pl", it.planId).put("sp", it.split).put("bp", it.billPay).put("nt", it.note).put("rb", it.reimb)) } }
         val h = JSONArray().also { a -> snaps.forEach { a.put(JSONObject().put("i", it.id).put("c", it.category).put("s", it.start).put("e", it.end).put("b", it.budget).put("a", it.spent)) } }
         sp().edit().putString("cats", c.toString()).putString("txns", t.toString()).putString("snaps", h.toString()).apply()
         refreshWidget()
@@ -250,24 +253,64 @@ object Store {
         return n to c.timeInMillis
     }
     private fun saveC() {
-        val t = JSONArray().also { a -> tpls.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due).put("g", it.catName).put("b", it.debtId)) } }
-        val m = JSONArray().also { a -> items.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due).put("p", it.paid).put("t", it.txnId).put("g", it.catName).put("b", it.debtId).put("pp", it.paidPart)) } }
+        val t = JSONArray().also { a -> tpls.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due).put("g", it.catName).put("b", it.debtId).put("rb", it.reimb).put("wh", it.who)) } }
+        val m = JSONArray().also { a -> items.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("a", it.amount).put("d", it.due).put("p", it.paid).put("t", it.txnId).put("g", it.catName).put("b", it.debtId).put("pp", it.paidPart).put("rb", it.reimb).put("wh", it.who).put("rc", it.recv)) } }
         val h = JSONArray().also { a -> csnaps.forEach { a.put(JSONObject().put("i", it.id).put("s", it.start).put("e", it.end).put("y", it.salary).put("c", it.committed).put("x", it.spent).put("n", it.income).put("ci", it.carryIn).put("co", it.carryOut)) } }
         val c = cycle.value?.let { JSONObject().put("s", it.start).put("y", it.salary).put("x", it.next).put("c", it.carry).toString() } ?: ""
+        val rj = JSONArray().also { a -> rcvs.forEach { a.put(JSONObject().put("i", it.itemId).put("t", it.txnId).put("a", it.amount)) } }
         val lj2 = JSONArray().also { a -> links.forEach { a.put(JSONObject().put("t", it.txnId).put("i", it.itemId).put("a", it.amount)) } }
         val dj = JSONArray().also { a -> debts.forEach { a.put(JSONObject().put("i", it.id).put("n", it.name).put("t", it.total).put("b", it.balance).put("m", it.monthly).put("d", it.due).put("f", it.firstDue).put("k", it.months).put("g", it.group)) } }
         val lj = JSONArray().also { a -> dlogs.forEach { a.put(JSONObject().put("d", it.debtId).put("i", it.itemId).put("t", it.time).put("a", it.amount)) } }
-        sp().edit().putString("links", lj2.toString()).putString("debts", dj.toString()).putString("dlogs", lj.toString()).putString("tpl", t.toString()).putString("items", m.toString()).putString("csnaps", h.toString()).putString("cyc", c).apply()
+        sp().edit().putString("rcvs", rj.toString()).putString("links", lj2.toString()).putString("debts", dj.toString()).putString("dlogs", lj.toString()).putString("tpl", t.toString()).putString("items", m.toString()).putString("csnaps", h.toString()).putString("cyc", c).apply()
         refreshWidget()
     }
     fun cycleSpent(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && !it.later && it.time >= c.start }.sumOf { it.amount } }
-    fun cycleBought(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && !it.billPay && it.time >= c.start }.sumOf { it.amount } }
-    fun unpaid(): Double = items.filter { !it.paid }.sumOf { it.amount - it.paidPart } + billReserve()
+    fun cycleBought(): Double { val c = cycle.value ?: return 0.0; return txns.filter { !it.income && !it.billPay && !it.reimb && it.time >= c.start }.sumOf { it.amount } }
+    fun unpaid(): Double = items.filter { !it.paid && !it.reimb }.sumOf { it.amount - it.paidPart } + billReserve()
     fun cycleIncome(): Double { val c = cycle.value ?: return 0.0; return txns.filter { it.income && it.counted && it.time >= c.start }.sumOf { it.amount } }
     fun paidManual(): Double = items.filter { it.paid && it.txnId.isEmpty() }.sumOf { it.amount - it.paidPart }
     fun spentAll(): Double = cycleSpent() + paidManual() + billCash()
     fun cashLeft(): Double = (cycle.value?.salary ?: 0.0) + (cycle.value?.carry ?: 0.0) + cycleIncome() - spentAll()
-    fun cycleLeft(): Double = cashLeft() - unpaid()
+    fun paidTotal(i: Item): Double = if (i.paid) i.amount else i.paidPart
+    fun outstanding(i: Item): Double = if (i.reimb) (paidTotal(i) - i.recv).coerceAtLeast(0.0) else 0.0
+    fun toReceive(): Double = items.sumOf { outstanding(it) }
+    fun cycleLeft(): Double = cashLeft() - unpaid() + toReceive()
+    fun suggestions(): List<Pair<Item, Txn>> {
+        val cut = System.currentTimeMillis() - 45L * 86400000L
+        val used = rcvs.map { it.txnId }.toSet()
+        val out = ArrayList<Pair<Item, Txn>>()
+        for (t in txns) if (t.income && t.time > cut && t.id !in used) {
+            val i = items.firstOrNull { x -> outstanding(x) > 0.005 && Math.abs(outstanding(x) - t.amount) < 0.005 && out.none { it.first.id == x.id } }
+            if (i != null) out.add(i to t)
+        }
+        return out
+    }
+    fun receive(i: Item, amount: Double, incomeTxnId: String?) {
+        val k = items.indexOfFirst { it.id == i.id }; if (k < 0) return
+        val amt = minOf(amount, outstanding(items[k])); if (amt <= 0.005) return
+        var tid = incomeTxnId
+        if (tid == null) {
+            tid = "rcv:" + System.nanoTime()
+            val l = (txns + Txn(tid, amt, items[k].who.ifBlank { items[k].name }, "Income", System.currentTimeMillis(), true, true)).sortedByDescending { it.time }
+            txns.clear(); txns.addAll(l)
+        } else { val ti = txns.indexOfFirst { it.id == tid }; if (ti >= 0) txns[ti] = txns[ti].copy(counted = true) }
+        items[k] = items[k].copy(recv = items[k].recv + amt)
+        rcvs.add(Rcv(i.id, tid, amt))
+        save(); saveC()
+    }
+    fun undoReceive(r: Rcv) {
+        rcvs.remove(r)
+        val k = items.indexOfFirst { it.id == r.itemId }
+        if (k >= 0) items[k] = items[k].copy(recv = (items[k].recv - r.amount).coerceAtLeast(0.0))
+        if (r.txnId.startsWith("rcv:")) txns.removeAll { it.id == r.txnId }
+        save(); saveC()
+    }
+    private fun refreshReimb(txnId: String) {
+        val ti = txns.indexOfFirst { it.id == txnId }; if (ti < 0) return
+        val ls = linksOf(txnId)
+        val all = ls.isNotEmpty() && ls.all { l -> items.firstOrNull { it.id == l.itemId }?.reimb == true }
+        if (txns[ti].reimb != all) { txns[ti] = txns[ti].copy(reimb = all); save() }
+    }
     fun startCycle(salary: Double, start: Long, next: Long, chosen: List<Tpl>, carry: Double = 0.0) {
         val old = cycle.value
         if (old != null) csnaps.add(0, CSnap("c:${old.start}", old.start, start, old.salary, unpaid(),
@@ -285,7 +328,8 @@ object Store {
         }
         val keep = items.filter { i -> !i.paid && tpls.none { it.id == i.id } && chosen.none { it.id == i.id } }.map { it.copy(amount = (it.amount - it.paidPart).coerceAtLeast(0.0), paidPart = 0.0) }
         cycle.value = Cycle(start, salary, next, carry)
-        items.clear(); items.addAll(chosen.map { Item(it.id, it.name, it.amount, it.due, false, "", it.catName, it.debtId) }); items.addAll(keep)
+        val keepR = items.filter { outstanding(it) > 0.005 }.map { it.copy(id = it.id + "-c", amount = paidTotal(it), paid = true, paidPart = paidTotal(it), txnId = "carried") }
+        items.clear(); items.addAll(chosen.map { Item(it.id, it.name, it.amount, it.due, false, "", it.catName, it.debtId, 0.0, it.reimb, it.who) }); items.addAll(keep.filter { !it.reimb || !it.paid }); items.addAll(keepR)
         save(); saveC()
     }
     fun editCycle(salary: Double, next: Long, carry: Double = 0.0) { cycle.value = cycle.value?.copy(salary = salary, next = next, carry = carry); saveC() }
@@ -458,6 +502,7 @@ object Store {
         items[k] = cur.copy(paidPart = np, paid = done, txnId = if (done) txnId else cur.txnId)
         links.add(Link(txnId, cur.id, a))
         payDebtAmt(cur.debtId, a, "lk:$txnId:${cur.id}")
+        refreshReimb(txnId)
         saveC()
     }
     fun unlink(l: Link) {
@@ -471,6 +516,7 @@ object Store {
             items[k] = cur.copy(paidPart = np, paid = done, txnId = if (done) (links.lastOrNull { it.itemId == cur.id }?.txnId ?: "") else "")
         }
         saveC()
+        refreshReimb(l.txnId)
         applyLinkSplit(l.txnId)
     }
     private fun ensureCat(name: String) {
@@ -481,6 +527,7 @@ object Store {
     private fun applyLinkSplit(txnId: String) {
         val ti = txns.indexOfFirst { it.id == txnId }; if (ti < 0) return
         val t = txns[ti]
+        if (t.reimb) return
         val cats = linksOf(txnId).mapNotNull { l -> items.firstOrNull { it.id == l.itemId }?.let { it.catName.ifBlank { "Commitment" } to l.amount } }
         if (cats.isEmpty()) {
             if (t.category == "Commitment" && t.split.isBlank()) { txns[ti] = t.copy(category = "Uncategorized"); save() }
@@ -498,7 +545,7 @@ object Store {
     }
     fun saveItem(old: Item?, n: Item, toList: Boolean) {
         if (old == null) items.add(n) else { val k = items.indexOf(old); if (k >= 0) items[k] = n }
-        val t = Tpl(n.id, n.name, n.amount, n.due, n.catName, n.debtId)
+        val t = Tpl(n.id, n.name, n.amount, n.due, n.catName, n.debtId, n.reimb, n.who)
         val ti = tpls.indexOfFirst { it.id == n.id }
         if (ti >= 0) tpls[ti] = t else if (toList) tpls.add(t)
         saveC()
@@ -510,7 +557,7 @@ object Store {
         val a = JSONArray(t.split)
         return (0 until a.length()).map { a.getJSONArray(it).let { p -> p.getString(0) to p.getDouble(1) } }
     }
-    fun catAmt(t: Txn, cat: String): Double = if (t.billPay) 0.0 else parts(t).filter { it.first == cat }.sumOf { it.second }
+    fun catAmt(t: Txn, cat: String): Double = if (t.billPay || t.reimb) 0.0 else parts(t).filter { it.first == cat }.sumOf { it.second }
     fun setSplit(t: Txn, p: List<Pair<String, Double>>) {
         val i = txns.indexOfFirst { it.id == t.id }; if (i < 0) return
         if (p.isEmpty()) { txns[i] = txns[i].copy(split = ""); save(); return }
