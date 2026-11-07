@@ -541,7 +541,7 @@ object Store {
     }
     fun linkAll(txnId: String, a: List<Pair<String, Double>>) {
         for ((id, amt) in a) { val i = items.firstOrNull { it.id == id } ?: continue; linkPay(txnId, i, amt) }
-        applyLinkSplit(txnId)
+        if (a.isNotEmpty() || linksOf(txnId).isNotEmpty()) applyLinkSplit(txnId)
     }
     fun saveItem(old: Item?, n: Item, toList: Boolean) {
         if (old == null) items.add(n) else { val k = items.indexOf(old); if (k >= 0) items[k] = n }
@@ -609,7 +609,12 @@ object Store {
     fun addTxn(t: Txn): Txn? {
         rollover()
         if (txns.any { it.id == t.id }) return null
-        val i = txns.indexOfFirst { Math.abs(it.amount - t.amount) < 0.005 && Math.abs(it.time - t.time) < 3 * 60 * 1000 }
+        val pk = t.id.substringBefore(':')
+        val i = txns.indexOfFirst { o ->
+            Math.abs(o.amount - t.amount) < 0.005 && o.income == t.income &&
+                (if (o.id.substringBefore(':') == pk) o.merchant == t.merchant && Math.abs(o.time - t.time) < 2 * 60 * 1000
+                else Math.abs(o.time - t.time) < 10 * 60 * 1000)
+        }
         if (i >= 0) {
             val old = txns[i]
             if (t.id.startsWith(WALLET) && !old.id.startsWith(WALLET)) {
