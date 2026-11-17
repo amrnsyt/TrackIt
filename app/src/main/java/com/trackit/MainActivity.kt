@@ -400,6 +400,7 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
     val rows = Store.cats.map { it to Store.spent(it) }
     val total = rows.sumOf { it.second }
     val top = rows.filter { it.second > 0 || it.first.budget > 0 }.sortedByDescending { it.second }.take(8)
+    var arrange by remember { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
         item {
             Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -407,7 +408,15 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
                 Text("spent across ${Store.cats.size} categories this period", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        item {
+        item(key = "m_arrange") {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton({ arrange = true }) { Icon(Icons.Filled.Tune, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Arrange") }
+            }
+        }
+        Store.bOrder.toList().forEach { id ->
+            if (id !in Store.bHidden) when (id) {
+                "donut" -> {
+        item(key = "m_donut") {
             Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(20.dp)) {
                     Text("Spending by category", style = MaterialTheme.typography.titleMedium)
@@ -418,7 +427,10 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
                 }
             }
         }
-        item { TrendCard() }
+                }
+                "compare" -> item(key = "m_compare") { CompareCard() }
+                "trend" -> item(key = "m_trend") { TrendCard() }
+                "cats" -> {
         if (Store.cats.isEmpty()) item { EmptyState(Icons.Filled.PieChart, "No categories", "Create a category to group payments and set a budget.") }
         items(Store.cats.toList(), key = { it.name }) { c ->
             val v = Store.spent(c)
@@ -447,8 +459,12 @@ fun Budgets(onEdit: (Category) -> Unit, onNew: () -> Unit) {
                 }
             }
         }
+                }
+            }
+        }
         item { Spacer(Modifier.height(6.dp)); PrimaryButton("Create a new category") { onNew() } }
     }
+    if (arrange) ArrangeSheet { arrange = false }
 }
 
 @Composable
@@ -1599,5 +1615,107 @@ fun ReceiveSheet(item: Item, close: () -> Unit) {
         }
         Field(amt, { amt = it }, "Amount received RM", KeyboardType.Decimal)
         PrimaryButton("Mark received", v != null && v > 0 && v <= out + 0.005 && (!link || pick != null)) { Store.receive(item, v!!, pick); close() }
+    }
+}
+
+fun compareData(period: String, sel: List<String>): List<Pair<String, List<Double>>> {
+    val n = when (period) { "D" -> 7; "Y" -> 3; else -> 6 }
+    val fmt = SimpleDateFormat(when (period) { "D" -> "EEE"; "Y" -> "yyyy"; else -> "MMM" }, Locale.getDefault())
+    return (n - 1 downTo 0).map { i ->
+        val s = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            when (period) {
+                "D" -> add(Calendar.DAY_OF_MONTH, -i)
+                "Y" -> { set(Calendar.DAY_OF_YEAR, 1); add(Calendar.YEAR, -i) }
+                else -> { set(Calendar.DAY_OF_MONTH, 1); add(Calendar.MONTH, -i) }
+            }
+        }
+        val e = (s.clone() as Calendar).apply {
+            when (period) { "D" -> add(Calendar.DAY_OF_MONTH, 1); "Y" -> add(Calendar.YEAR, 1); else -> add(Calendar.MONTH, 1) }
+        }
+        val tx = Store.txns.filter { !it.income && it.time >= s.timeInMillis && it.time < e.timeInMillis }
+        fmt.format(s.time) to sel.map { c -> if (c == "Total") tx.filter { !it.billPay && !it.reimb }.sumOf { it.amount } else tx.sumOf { Store.catAmt(it, c) } }
+    }
+}
+
+fun cmpColor(n: String, primary: Color): Color = if (n == "Total") primary else catColor(n)
+
+@Composable
+fun CmpBar(frac: Float, color: Color, w: androidx.compose.ui.unit.Dp) {
+    val f by animateFloatAsState(frac.coerceIn(0f, 1f), tween(600), label = "cb")
+    Box(Modifier.width(w).height(130.dp), contentAlignment = Alignment.BottomCenter) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(f.coerceAtLeast(0.02f)).clip(RoundedCornerShape(6.dp)).background(color))
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun CompareCard() {
+    val period = Store.cmpPeriod.value
+    val chosen = Store.cmpCats.toList().filter { it == "Total" || Store.cats.any { c -> c.name == it } }.ifEmpty { listOf("Total") }
+    val data = compareData(period, chosen)
+    val max = (data.maxOfOrNull { it.second.maxOrNull() ?: 0.0 } ?: 0.0).coerceAtLeast(1.0)
+    var more by remember { mutableStateOf(false) }
+    val usage = Store.cats.map { it.name }.sortedByDescending { n -> Store.txns.count { it.category == n } }
+    val names = (listOf("Total") + (if (more) usage else usage.take(8)) + chosen).distinct()
+    val primary = MaterialTheme.colorScheme.primary
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val barW = when (chosen.size) { 1 -> 26.dp; 2 -> 16.dp; else -> 11.dp }
+    val labels = when (period) { "D" -> "today" to "yesterday"; "Y" -> "this year" to "last year"; else -> "this month" to "last month" }
+    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Compare categories", style = MaterialTheme.typography.titleMedium)
+            Text("Pick up to 3 categories and a period.", style = MaterialTheme.typography.bodySmall, color = muted)
+            Chips(listOf("D" to "Day", "M" to "Month", "Y" to "Year"), period) { Store.setCmpPeriod(it) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                names.forEach { n -> FilterChip(selected = n in chosen, onClick = { Store.toggleCmp(n) }, label = { Text(n) }) }
+                if (!more && usage.size > 8) AssistChip({ more = true }, { Text("More…") })
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                data.forEach { (label, vals) ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
+                            vals.forEachIndexed { k, v -> CmpBar((v / max).toFloat(), cmpColor(chosen[k], primary), barW) }
+                        }
+                        Text(label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            chosen.forEachIndexed { k, n ->
+                val cur = data.last().second[k]
+                val prev = data[data.size - 2].second[k]
+                val diff = if (prev > 0) ((cur - prev) / prev * 100).toInt() else null
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(cmpColor(n, primary)))
+                    Column(Modifier.weight(1f)) {
+                        Text(n, fontWeight = FontWeight.SemiBold)
+                        Text("${labels.first} ${rm(cur)} · ${labels.second} ${rm(prev)}", style = MaterialTheme.typography.bodySmall, color = muted)
+                    }
+                    if (diff != null) Pill((if (diff >= 0) "+" else "") + diff + "%",
+                        if (diff > 0) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer,
+                        if (diff > 0) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ArrangeSheet(close: () -> Unit) {
+    val names = mapOf("donut" to "Spending by category", "compare" to "Compare categories", "trend" to "Spending trend", "cats" to "Category cards")
+    Sheet("Arrange Budgets", close) {
+        Text("Move modules up or down, or hide the ones you do not need.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val order = Store.bOrder.toList()
+        order.forEachIndexed { idx, id ->
+            Surface(color = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.medium) {
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(names[id] ?: id, Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    IconButton({ Store.moveModule(id, -1) }, enabled = idx > 0) { Icon(Icons.Filled.ArrowUpward, "Move up") }
+                    IconButton({ Store.moveModule(id, 1) }, enabled = idx < order.size - 1) { Icon(Icons.Filled.ArrowDownward, "Move down") }
+                    Switch(id !in Store.bHidden, { Store.setModuleVisible(id, it) })
+                }
+            }
+        }
+        TextButton({ Store.resetModules() }, Modifier.fillMaxWidth()) { Text("Reset to default") }
     }
 }

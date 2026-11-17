@@ -49,6 +49,11 @@ object Store {
     val openId = mutableStateOf<String?>(null)
     val theme = mutableStateOf("SYSTEM")
     val hideBal = mutableStateOf(false)
+    val bOrder = mutableStateListOf("donut", "compare", "trend", "cats")
+    val bHidden = mutableStateListOf<String>()
+    val cmpPeriod = mutableStateOf("M")
+    val cmpCats = mutableStateListOf<String>()
+    private val allMods = listOf("donut", "compare", "trend", "cats")
     val rules = mutableStateListOf<Rule>()
     val ignored = mutableStateListOf<Ign>()
     val seen = mutableStateListOf<String>()
@@ -66,6 +71,7 @@ object Store {
         hideBal.value = sp().getBoolean("hide", false)
         loadRules()
         remindOn.value = sp().getBoolean("remind", true)
+        loadUi()
         load()
         ready = true
         rollover()
@@ -229,6 +235,29 @@ object Store {
         return only.isEmpty() || only.any { matches(it.keyword, text) }
     }
     fun appLabel(pkg: String): String = try { val pm = ctx.packageManager; pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (e: Exception) { pkg }
+    private fun loadUi() {
+        val s = sp()
+        val ord = (s.getString("bord", "") ?: "").split(",").filter { it in allMods }
+        bOrder.clear(); bOrder.addAll(ord + allMods.filter { it !in ord })
+        bHidden.clear(); bHidden.addAll((s.getString("bhid", "") ?: "").split(",").filter { it in allMods })
+        cmpPeriod.value = s.getString("cmpP", "M") ?: "M"
+        cmpCats.clear(); cmpCats.addAll((s.getString("cmpC", "") ?: "").split("|").filter { it.isNotBlank() })
+    }
+    private fun saveUi() {
+        sp().edit().putString("bord", bOrder.joinToString(",")).putString("bhid", bHidden.joinToString(",")).putString("cmpP", cmpPeriod.value).putString("cmpC", cmpCats.joinToString("|")).apply()
+    }
+    fun moveModule(id: String, dir: Int) {
+        val i = bOrder.indexOf(id); val j = i + dir
+        if (i < 0 || j < 0 || j >= bOrder.size) return
+        bOrder.removeAt(i); bOrder.add(j, id); saveUi()
+    }
+    fun setModuleVisible(id: String, v: Boolean) { if (v) bHidden.remove(id) else if (id !in bHidden) bHidden.add(id); saveUi() }
+    fun resetModules() { bOrder.clear(); bOrder.addAll(allMods); bHidden.clear(); saveUi() }
+    fun setCmpPeriod(p: String) { cmpPeriod.value = p; saveUi() }
+    fun toggleCmp(name: String) {
+        if (name in cmpCats) { if (cmpCats.size > 1) cmpCats.remove(name) } else { if (cmpCats.size >= 3) cmpCats.removeAt(0); cmpCats.add(name) }
+        saveUi()
+    }
     private fun refreshWidget() { try { BalanceWidget.refresh(ctx) } catch (_: Exception) { } }
     fun exportCsv(): String {
         fun q(x: String) = "\"" + x.replace("\"", "\"\"") + "\""
