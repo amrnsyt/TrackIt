@@ -1671,16 +1671,6 @@ fun CompareCard() {
                 names.forEach { n -> FilterChip(selected = n in chosen, onClick = { Store.toggleCmp(n) }, label = { Text(n) }) }
                 if (!more && usage.size > 8) AssistChip({ more = true }, { Text("More…") })
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                data.forEach { (label, vals) ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
-                            vals.forEachIndexed { k, v -> CmpBar((v / max).toFloat(), cmpColor(chosen[k], primary), barW) }
-                        }
-                        Text(label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
             chosen.forEachIndexed { k, n ->
                 val cur = data.last().second[k]
                 val prev = data[data.size - 2].second[k]
@@ -1694,6 +1684,16 @@ fun CompareCard() {
                     if (diff != null) Pill((if (diff >= 0) "+" else "") + diff + "%",
                         if (diff > 0) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer,
                         if (diff > 0) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                data.forEach { (label, vals) ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
+                            vals.forEachIndexed { k, v -> CmpBar((v / max).toFloat(), cmpColor(chosen[k], primary), barW) }
+                        }
+                        Text(label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         }
